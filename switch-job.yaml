@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: switch-tpu
+spec:
+  template:
+    metadata:
+      annotations:
+        # The Cloud TPUs that will be created for this Job will support
+        # TensorFlow 2.3. This version MUST match the
+        # TensorFlow version that your model is built on.
+        tf-version.cloud-tpus.google.com: "2.3"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: tpu-1
+        image: tensorflow/tensorflow:2.3.0
+        command:
+        - bash
+        - -c
+        - |
+          echo $(KUBE_GOOGLE_CLOUD_TPU_ENDPOINTS)
+        resources:
+          limits:
+            # Request a single Preemptible v2-8 Cloud TPU device to train the
+            # model. A single v2-8 Cloud TPU device consists of 4 chips, each of
+            # which has 2 cores, so there are 8 cores in total.
+            cloud-tpus.google.com/preemptible-v2: 8
+
+      - name: tpu-2
+        image: tensorflow/tensorflow:2.3.0
+        command:
+        - bash
+        - -c
+        - |
+          echo $(KUBE_GOOGLE_CLOUD_TPU_ENDPOINTS)
+        resources:
+          limits:
+            # Request a single Preemptible v2-8 Cloud TPU device to train the
+            # model. A single v2-8 Cloud TPU device consists of 4 chips, each of
+            # which has 2 cores, so there are 8 cores in total.
+            cloud-tpus.google.com/preemptible-v2: 8
+      - name: tensorboard
+        image: tensorflow/tensorflow:2.2.0
+        command:
+        - bash
+        - -c
+        - |
+          pip install tensorboard-plugin-profile==2.3.0 cloud-tpu-client
+          tensorboard --logdir=gs://switch-tpu/ls
+          test-1 --port=6006
+        ports:
+        - containerPort: 6006
