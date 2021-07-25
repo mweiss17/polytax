@@ -1,8 +1,7 @@
-
-NETWORK=${1:-"tpu-network"}
-SUBNETWORK=${2:-"swarm-1"}
-NUMNODES=${3:-2}
-STARTNUM=${4:-"0"}
+STARTNUM=${1:-"0"}
+NUMNODES=${2:-2}
+NETWORK=${3:-"tpu-network"}
+SUBNETWORK=${4:-"swarm-1"}
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
 ENDNUM=$(($STARTNUM+$NUMNODES-1))
 for i in $(seq $STARTNUM $ENDNUM); do
@@ -27,12 +26,10 @@ for i in $(seq $STARTNUM $ENDNUM); do
 
     export RANK='"$i"'
     python3 -m pip install --upgrade build
-    echo hello >> logs.txt
     pwd >> logs.txt
-    ls -la >> logs.txt
-    echo $RANK >> logs.txt
+    echo node rank: $RANK >> logs.txt
 
-    python main.py'
+    python main.py >> logs.txt'
 done
 
 

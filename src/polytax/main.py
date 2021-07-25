@@ -66,5 +66,6 @@ def main(args):
         launch_cluster()
 
 if __name__ == "__main__":
+    print("Beginning main.py")
     args = get_args()
     main(args)
