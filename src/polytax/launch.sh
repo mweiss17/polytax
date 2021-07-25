@@ -2,9 +2,10 @@
 NETWORK=${1:-"tpu-network"}
 SUBNETWORK=${2:-"swarm-1"}
 NUMNODES=${3:-2}
+STARTNUM=${4:-"1"}
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
 
-for i in $(seq 1 $NUMNODES); do
+for i in $(seq $STARTNUM $(($STARTUNUM+$NUMNODES)); do
   NODENAME="node-$(($i-1))"
   echo creating $NODENAME
 
