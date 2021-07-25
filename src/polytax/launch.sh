@@ -29,7 +29,7 @@ for i in $(seq $STARTNUM $ENDNUM); do
     pwd >> logs.txt
     echo node rank: $RANK >> logs.txt
 
-    python main.py >> logs.txt'
+    python3 main.py >> logs.txt'
 done
 
 
