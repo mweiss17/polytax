@@ -2,11 +2,11 @@
 NETWORK=${1:-"tpu-network"}
 SUBNETWORK=${2:-"swarm-1"}
 NUMNODES=${3:-2}
-STARTNUM=${4:-"1"}
+STARTNUM=${4:-"0"}
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
-
-for i in $(seq $STARTNUM $(($STARTUNUM+$NUMNODES)); do
-  NODENAME="node-$(($i-1))"
+ENDNUM=$(($STARTNUM+$NUMNODES-1))
+for i in $(seq $STARTNUM $ENDNUM); do
+  NODENAME="node-$(($i))"
   echo creating $NODENAME
 
   # Spool up a TPU node
@@ -16,9 +16,23 @@ for i in $(seq $STARTNUM $(($STARTUNUM+$NUMNODES)); do
   --subnetwork $SUBNETWORK \
   --accelerator-type v2-8 \
   --version v2-alpha \
-  --metadata-from-file=startup-script=startup.sh \
-  --metadata=RANK=$i \
-  --async
+  --async \
+  --metadata startup-script='#! /bin/bash
+    apt update
+    sudo su martin
+    cd /home/martin
+
+    git clone https://github.com/mweiss17/polytax.git
+    cd polytax
+
+    export RANK='"$i"'
+    python3 -m pip install --upgrade build
+    echo hello >> logs.txt
+    pwd >> logs.txt
+    ls -la >> logs.txt
+    echo $RANK >> logs.txt
+
+    python main.py'
 done
 
 

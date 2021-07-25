@@ -1,5 +1,6 @@
 #! /bin/bash
 apt update
+sudo su martin
 cd /home/martin
 git clone https://github.com/mweiss17/polytax.git
 cd polytax
