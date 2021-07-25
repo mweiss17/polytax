@@ -3,10 +3,10 @@ NETWORK=${1:-"tpu-network"}
 SUBNETWORK=${2:-"swarm-1"}
 NUMNODES=${3:-2}
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
-break
+
 for i in $(seq 1 $NUMNODES); do
   NODENAME="node-$(($i-1))"
-  echo spooling up $NODENAME
+  echo creating $NODENAME
 
   # Spool up a TPU node
   gcloud alpha compute tpus tpu-vm create $NODENAME \
@@ -15,10 +15,11 @@ for i in $(seq 1 $NUMNODES); do
   --subnetwork $SUBNETWORK \
   --accelerator-type v2-8 \
   --version v2-alpha \
-  --async \
   --metadata-from-file=startup-script=startup.sh \
-  --metadata=RANK=$i
+  --metadata=RANK=$i \
+  --async
 done
+
 
 #break
 ## Connect to Cloud TPU
