@@ -17,7 +17,7 @@ for i in $(seq $STARTNUM $ENDNUM); do
   --accelerator-type v2-8 \
   --version v2-alpha \
   --async \
-  --metadata startup-script='#! /bin/bash
+  --metadata=startup-script='#! /bin/bash
     apt update
     sudo su martin
     cd /home/martin
