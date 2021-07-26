@@ -9,6 +9,11 @@ import torch.distributed as dist
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dev", action="store_true", help="Whether we should run a dev version locally")
+    parser.add_argument("--rank", type=int, help="rank of this process")
+    parser.add_argument("--size", type=int, help="number of processes", default=2)
+    parser.add_argument("--addr", type=str, help="ip address", default="127.0.0.1")
+    parser.add_argument("--port", type=str, help="ip port number", default="2345")
+
     return parser.parse_args()
 
 
@@ -39,31 +44,26 @@ def init_process(rank, size, fn, addr, port, backend='gloo'):
     fn(rank, size)
 
 
-def launch_local():
-    size = 2
-    addr = '127.0.0.1'
-    port = '2345'
+def launch_local(args):
     processes = []
     mp.set_start_method("spawn")
-    for rank in range(size):
-        p = mp.Process(target=init_process, args=(rank, size, run, addr, port))
+    for rank in range(args.size):
+        p = mp.Process(target=init_process, args=(rank, args.size, run, args.addr, args.port))
         p.start()
         processes.append(p)
 
     for p in processes:
         p.join()
 
-def launch_cluster():
-    addr = '192.168.0.2'
-    port = '2345'
-    init_process(rank=1, size=2, fn=run, addr=addr, port=port)
+def launch_cluster(args):
+    init_process(rank=args.rank, size=args.size, fn=run, addr=args.addr, port=args.port)
 
 
 def main(args):
     if args.dev:
-        launch_local()
+        launch_local(args)
     else:
-        launch_cluster()
+        launch_cluster(args)
 
 if __name__ == "__main__":
     print("Beginning main.py")

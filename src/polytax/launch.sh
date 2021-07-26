@@ -16,20 +16,15 @@ for i in $(seq $STARTNUM $ENDNUM); do
   --accelerator-type v2-8 \
   --version v2-alpha \
   --async \
-  --metadata=startup-script='#! /bin/bash
-    apt update
-    sudo su martin
-    cd /home/martin
-
-    git clone https://github.com/mweiss17/polytax.git
-    cd polytax
-
-    export RANK='"$i"'
-    python3 -m pip install --upgrade build
-    pwd >> logs.txt
-    echo node rank: $RANK >> logs.txt
-
-    python3 main.py >> logs.txt'
+  --metadata=startup-script="#! /bin/bash
+    sudo useradd -m martin
+    sudo -u martin bash -c 'cd ~/ '
+    sudo -u martin bash -c 'git clone https://github.com/mweiss17/polytax.git'
+    sudo -u martin bash -c 'cd polytax'
+    sudo -u martin bash -c 'python3 -m pip install --upgrade build'
+    sudo -u martin bash -c 'cd src/polytax'
+    sudo -u martin bash -c 'python3 main.py --rank=$i --addr=192.168.0.2 --port=2345 >> /home/martin/polytax/logs.txt'
+    "
 done
 
 
