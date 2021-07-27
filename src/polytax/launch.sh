@@ -1,9 +1,26 @@
-STARTNUM=${1:-"0"}
+STARTNUM=${1:-"1"}
 NUMNODES=${2:-2}
 NETWORK=${3:-"tpu-network"}
-SUBNETWORK=${4:-"swarm-1"}
+SUBNETWORK=${4:-"swarm-2"}
+RANGE="192.169.0.0/29"
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
-ENDNUM=$(($STARTNUM+$NUMNODES-1))
+ENDNUM=$(($STARTNUM+$NUMNODES-2))
+
+# Boot node-0 (which is also the control plane)
+gcloud alpha compute tpus tpu-vm create node-0 \
+  --zone us-central1-f \
+  --network $NETWORK \
+  --subnetwork $SUBNETWORK \
+  --range $RANGE \
+  --accelerator-type v2-8 \
+  --version v2-alpha \
+  --metadata=startup-script="#! /bin/bash
+    sudo useradd -m martin;
+    sudo -u martin bash -c 'cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=$i --port=2345 >> /home/martin/polytax/logs.txt'"
+
+# Get internal-ip for the controlling node
+CONTROLIP=$(gcloud compute instances describe node-0 --format='get(networkInterfaces[0].networkIP)')
+echo $CONTROLIP
 for i in $(seq $STARTNUM $ENDNUM); do
   NODENAME="node-$(($i))"
   echo creating $NODENAME
@@ -13,18 +30,15 @@ for i in $(seq $STARTNUM $ENDNUM); do
   --zone us-central1-f \
   --network $NETWORK \
   --subnetwork $SUBNETWORK \
+  --range $RANGE \
   --accelerator-type v2-8 \
   --version v2-alpha \
-  --async \
   --metadata=startup-script="#! /bin/bash
     sudo useradd -m martin
-    sudo -u martin bash -c 'cd ~/ '
-    sudo -u martin bash -c 'git clone https://github.com/mweiss17/polytax.git'
-    sudo -u martin bash -c 'cd polytax'
-    sudo -u martin bash -c 'python3 -m pip install --upgrade build'
-    sudo -u martin bash -c 'cd src/polytax'
-    sudo -u martin bash -c 'python3 main.py --rank=$i --addr=192.168.0.2 --port=2345 >> /home/martin/polytax/logs.txt'
-    "
+    sudo -u martin bash -c 'cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=$i --addr=$CONTROLIP --port=2345 >> /home/martin/polytax/logs.txt'
+    " \
+  --async
+
 done
 
 

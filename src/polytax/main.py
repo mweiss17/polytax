@@ -1,10 +1,10 @@
 import os
 import time
 import argparse
-import torch.multiprocessing as mp
 import torch
+import torch.multiprocessing as mp
 import torch.distributed as dist
-
+from network import get_internal_ip
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -66,6 +66,11 @@ def main(args):
         launch_cluster(args)
 
 if __name__ == "__main__":
-    print("Beginning main.py")
     args = get_args()
+
+    if not args.dev and not args.addr:
+        print("Retrieving internal ip...")
+        args.addr = get_internal_ip()
+        print(args.addr)
+
     main(args)
