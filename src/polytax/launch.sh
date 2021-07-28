@@ -15,10 +15,8 @@ gcloud alpha compute tpus tpu-vm create "node-$ROOTID" \
   --accelerator-type v2-8 \
   --version v2-alpha \
   --metadata=startup-script="#! /bin/bash
-    sudo useradd -m martin;
-    export XRT_TPU_CONFIG=localservice;0;localhost:51011';
-    unset LD_PRELOAD
-    sudo -u martin bash -c 'cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=0 --port=2345 >> /home/martin/polytax/logs.txt'"
+    export XRT_TPU_CONFIG='localservice;0;localhost:51011'; unset LD_PRELOAD; cd /home/root; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=$ROOTID --addr=$CONTROLIP --port=2345 >> /home/root/polytax/logs.txt
+  "
 
 # Get internal-ip for the controlling node
 CONTROLIP=$(gcloud alpha compute tpus describe node-0 --format='get(ipAddress)')
@@ -36,8 +34,7 @@ for i in $(seq 1 $(($NUMNODES-1))); do
   --accelerator-type v2-8 \
   --version v2-alpha \
   --metadata=startup-script="#! /bin/bash
-    sudo useradd -m martin
-    sudo -u martin bash -c 'cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=$i --addr=$CONTROLIP --port=2345 >> /home/martin/polytax/logs.txt'
+    export XRT_TPU_CONFIG='localservice;0;localhost:51011'; unset LD_PRELOAD; cd /home/root/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=$i --addr=$CONTROLIP --port=2345 >> /home/root/polytax/logs.txt
     " \
   --async
 
