@@ -1,13 +1,13 @@
-STARTNUM=${1:-"1"}
+ROOTID=${1:-"0"}
 NUMNODES=${2:-2}
 NETWORK=${3:-"tpu-network"}
 SUBNETWORK=${4:-"swarm-2"}
 RANGE="192.169.0.0/29"
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
-ENDNUM=$(($STARTNUM+$NUMNODES-2))
+ENDNUM=$((ROOTID+$NUMNODES-2))
 
 # Boot node-0 (which is also the control plane)
-gcloud alpha compute tpus tpu-vm create node-0 \
+gcloud alpha compute tpus tpu-vm create "node-$ROOTID" \
   --zone us-central1-f \
   --network $NETWORK \
   --subnetwork $SUBNETWORK \
@@ -16,13 +16,15 @@ gcloud alpha compute tpus tpu-vm create node-0 \
   --version v2-alpha \
   --metadata=startup-script="#! /bin/bash
     sudo useradd -m martin;
-    sudo -u martin bash -c 'cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=$i --port=2345 >> /home/martin/polytax/logs.txt'"
+    export XRT_TPU_CONFIG=localservice;0;localhost:51011';
+    unset LD_PRELOAD
+    sudo -u martin bash -c 'cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 main.py --rank=0 --port=2345 >> /home/martin/polytax/logs.txt'"
 
 # Get internal-ip for the controlling node
-CONTROLIP=$(gcloud compute instances describe node-0 --format='get(networkInterfaces[0].networkIP)')
+CONTROLIP=$(gcloud alpha compute tpus describe node-0 --format='get(ipAddress)')
 echo $CONTROLIP
-for i in $(seq $STARTNUM $ENDNUM); do
-  NODENAME="node-$(($i))"
+for i in $(seq 1 $(($NUMNODES-1))); do
+  NODENAME="node-$(($i+$ROOTID))"
   echo creating $NODENAME
 
   # Spool up a TPU node

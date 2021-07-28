@@ -4,6 +4,8 @@ import argparse
 import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
+import torch_xla.core.xla_model as xm
+
 from network import get_internal_ip
 
 def get_args():
@@ -17,13 +19,11 @@ def get_args():
     return parser.parse_args()
 
 
-def run(rank, size):
+def run(rank, size, start):
     """ Distributed function to be implemented later. """
     print(f"rank: {rank}, size: {size}")
     tensor = torch.randn((10000, 10000))
     print(tensor.element_size())
-
-    start = time.time()
 
     if rank == 0:
         # Send the tensor to process 1
@@ -31,7 +31,7 @@ def run(rank, size):
     else:
         # Receive tensor from process 0
         dist.recv(tensor=tensor, src=0)
-    print(f"elapsed: {time.time() - start}")
+    print(f" {time.time() - start} elapsed after one communication")
 
     print('Rank ', rank, ' has data ', tensor[0])
 
@@ -44,7 +44,7 @@ def init_process(rank, size, fn, addr, port, backend='gloo'):
     fn(rank, size)
 
 
-def launch_local(args):
+def launch_local(args, start):
     processes = []
     mp.set_start_method("spawn")
     for rank in range(args.size):
@@ -59,18 +59,18 @@ def launch_cluster(args):
     init_process(rank=args.rank, size=args.size, fn=run, addr=args.addr, port=args.port)
 
 
-def main(args):
-    if args.dev:
-        launch_local(args)
-    else:
-        launch_cluster(args)
-
 if __name__ == "__main__":
+    start = time.time()
     args = get_args()
-
+    print(args)
+    dev = xm.xla_device()
+    print(f"dev: {dev}")
     if not args.dev and not args.addr:
         print("Retrieving internal ip...")
         args.addr = get_internal_ip()
         print(args.addr)
-
-    main(args)
+    print(f"Entering main after {time.time()-start}")
+    if args.dev:
+        launch_local(args, start)
+    else:
+        launch_cluster(args, start)
