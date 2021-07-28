@@ -1,3 +1,4 @@
+import sys
 import time
 import numpy as np
 import torch
@@ -16,7 +17,7 @@ def _train_update(device, x, loss, tracker, writer):
     test_utils.print_training_update(device, x, loss.item(), tracker.rate(), tracker.global_rate(), summary_writer=writer)
 
 
-def train(args, start):
+def train(args):
     # Set seed
     torch.manual_seed(1)
 
@@ -107,20 +108,29 @@ def train(args, start):
     xm.master_print('Max Accuracy: {:.2f}%'.format(max_accuracy))
     return max_accuracy
 
-    def _mp_fn(index):
-        device = xm.xla_device()
-        mp_device_loader = pl.MpDeviceLoader(train_loader, device)
+def _mp_fn(index, args):
+    torch.set_default_tensor_type('torch.FloatTensor')
+    accuracy = train(args)
+    print(f"accuracy: {accuracy}")
+    sys.exit(21)
 
-        model = MNISTModel().train().to(device)
-        loss_fn = nn.NLLLoss()
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=args.momentum)
+  # if flags.tidy and os.path.isdir(flags.datadir):
+  #   shutil.rmtree(flags.datadir)
 
-        for data, target in mp_device_loader:
-            optimizer.zero_grad()
-            output = model(data)
-            loss = loss_fn(output, target)
-            loss.backward()
-            xm.optimizer_step(optimizer)
+# def _mp_fn(index):
+#     device = xm.xla_device()
+#     mp_device_loader = pl.MpDeviceLoader(train_loader, device)
+#
+#     model = MNISTModel().train().to(device)
+#     loss_fn = nn.NLLLoss()
+#     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=args.momentum)
+#
+#     for data, target in mp_device_loader:
+#         optimizer.zero_grad()
+#         output = model(data)
+#         loss = loss_fn(output, target)
+#         loss.backward()
+#             xm.optimizer_step(optimizer)
 
 
 def run_comm(rank, size, start):
