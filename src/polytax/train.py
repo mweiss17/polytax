@@ -1,50 +1,22 @@
-import os
 import time
-import argparse
 import numpy as np
 import torch
-import torch.multiprocessing as mp
 import torch.distributed as dist
 import torch.optim as optim
 import torch.nn as nn
 import torch_xla.core.xla_model as xm
 import torch_xla.debug.metrics as met
 import torch_xla.distributed.parallel_loader as pl
-import torch_xla.distributed.xla_multiprocessing as xmp
 import torch_xla.test.test_utils as test_utils
 
 from datasets import get_datasets
 from models import MNISTModel
-from network import get_internal_ip
-
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dev", action="store_true", help="Whether we should run a dev version locally")
-
-    # multi-proc
-    parser.add_argument("--rank", type=int, help="rank of this process")
-    parser.add_argument("--size", type=int, help="number of processes", default=2)
-    parser.add_argument("--addr", type=str, help="ip address", default="127.0.0.1")
-    parser.add_argument("--port", type=str, help="ip port number", default="2345")
-
-    # dataloader
-    parser.add_argument("--datadir", type=str, default="/tmp/")
-    parser.add_argument("--dataset_name", type=str)
-    parser.add_argument("--batch_size", type=int, default=128)
-
-    # training
-    parser.add_argument("--num_epochs", type=int, default=18)
-    parser.add_argument("--momentum", type=float, default=0.5)
-    parser.add_argument("--lr", type=float, default=0.01)
-    parser.add_argument("--target_accuracy", type=float, default=98.0)
-
-    return parser.parse_args()
 
 def _train_update(device, x, loss, tracker, writer):
     test_utils.print_training_update(device, x, loss.item(), tracker.rate(), tracker.global_rate(), summary_writer=writer)
 
 
-def run(args, start):
+def train(args, start):
     # Set seed
     torch.manual_seed(1)
 
@@ -150,12 +122,9 @@ def run(args, start):
             loss.backward()
             xm.optimizer_step(optimizer)
 
-    if __name__ == '__main__':
-        xmp.spawn(_mp_fn, args=())
-
 
 def run_comm(rank, size, start):
-    """ Distributed function to be implemented later. """
+    """ Working example function to try out torch distributed. """
     print(f"rank: {rank}, size: {size}")
     tensor = torch.randn((10000, 10000))
     print(tensor.element_size())
@@ -170,41 +139,3 @@ def run_comm(rank, size, start):
 
     print('Rank ', rank, ' has data ', tensor[0])
 
-
-def init_process(args, start, fn, addr, port, backend='gloo'):
-    """ Initialize the distributed environment. """
-    print(f"tcp://{addr}:{port}")
-    dist.init_process_group(backend, init_method=f"tcp://{addr}:{port}", rank=args.rank, world_size=args.size)
-    fn(args, start)
-
-
-def launch_local(args, start):
-    processes = []
-    mp.set_start_method("spawn")
-    for rank in range(args.size):
-        p = mp.Process(target=init_process, args=(rank, args.size, run, args.addr, args.port))
-        p.start()
-        processes.append(p)
-
-    for p in processes:
-        p.join()
-
-def launch_cluster(args, start):
-    init_process(args=args, start=start, fn=run, addr=args.addr, port=args.port)
-
-
-if __name__ == "__main__":
-    start = time.time()
-    args = get_args()
-    print(args)
-    dev = xm.xla_device()
-    print(f"dev: {dev}")
-    if not args.dev and not args.addr:
-        print("Retrieving internal ip...")
-        args.addr = get_internal_ip()
-        print(args.addr)
-    print(f"Entering main after {time.time()-start}")
-    if args.dev:
-        launch_local(args, start)
-    else:
-        launch_cluster(args, start)
