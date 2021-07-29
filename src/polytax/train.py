@@ -15,6 +15,7 @@ from datasets import get_datasets
 from models import MNISTModel
 from argparser import get_args
 from network import get_internal_ip
+from setup_env import setup_env
 
 def _train_update(device, x, loss, tracker, writer):
     test_utils.print_training_update(device, x, loss.item(), tracker.rate(), tracker.global_rate(), summary_writer=writer)
@@ -123,41 +124,6 @@ def _mp_fn(index, args):
     print(f"accuracy: {accuracy}")
     sys.exit(21)
 
-  # if flags.tidy and os.path.isdir(flags.datadir):
-  #   shutil.rmtree(flags.datadir)
-
-# def _mp_fn(index):
-#     device = xm.xla_device()
-#     mp_device_loader = pl.MpDeviceLoader(train_loader, device)
-#
-#     model = MNISTModel().train().to(device)
-#     loss_fn = nn.NLLLoss()
-#     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=args.momentum)
-#
-#     for data, target in mp_device_loader:
-#         optimizer.zero_grad()
-#         output = model(data)
-#         loss = loss_fn(output, target)
-#         loss.backward()
-#             xm.optimizer_step(optimizer)
-
-
-def run_comm(rank, size, start):
-    """ Working example function to try out torch distributed. """
-    print(f"rank: {rank}, size: {size}")
-    tensor = torch.randn((10000, 10000))
-    print(tensor.element_size())
-
-    if rank == 0:
-        # Send the tensor to process 1
-        dist.send(tensor=tensor, dst=1)
-    else:
-        # Receive tensor from process 0
-        dist.recv(tensor=tensor, src=0)
-    print(f" {time.time() - start} elapsed after one communication")
-
-    print('Rank ', rank, ' has data ', tensor[0])
-
 
 if __name__ == '__main__':
     args = get_args()
@@ -167,5 +133,6 @@ if __name__ == '__main__':
         args.addr = get_internal_ip()
         print(args.addr)
     print(f"tcp://{args.addr}:{args.port}")
+    setup_env()
     xmp.spawn(_mp_fn, args=(args,), nprocs=args.ncores, start_method='fork')
 
