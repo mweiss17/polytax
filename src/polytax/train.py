@@ -9,9 +9,12 @@ import torch_xla.core.xla_model as xm
 import torch_xla.debug.metrics as met
 import torch_xla.distributed.parallel_loader as pl
 import torch_xla.test.test_utils as test_utils
+import torch_xla.distributed.xla_multiprocessing as xmp
 
 from datasets import get_datasets
 from models import MNISTModel
+from argparser import get_args
+from network import get_internal_ip
 
 def _train_update(device, x, loss, tracker, writer):
     test_utils.print_training_update(device, x, loss.item(), tracker.rate(), tracker.global_rate(), summary_writer=writer)
@@ -20,9 +23,9 @@ def _train_update(device, x, loss, tracker, writer):
 def train(args):
     # Set seed
     torch.manual_seed(1)
-
+    
     train_dataset, test_dataset = get_datasets(args.datadir, args.dataset_name)
-
+    
     train_sampler = None
     if xm.xrt_world_size() > 1:
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -110,6 +113,9 @@ def train(args):
 
 def _mp_fn(index, args):
     torch.set_default_tensor_type('torch.FloatTensor')
+    print(f"index: {index}")
+    print(f"xm index: {xm.get_ordinal()}")
+    print(f"xm local index: {xm.get_local_ordinal()}")
     accuracy = train(args)
     print(f"accuracy: {accuracy}")
     sys.exit(21)
@@ -148,4 +154,15 @@ def run_comm(rank, size, start):
     print(f" {time.time() - start} elapsed after one communication")
 
     print('Rank ', rank, ' has data ', tensor[0])
+
+
+if __name__ == '__main__':
+    args = get_args()
+    print(args)
+    if not args.addr:
+        print("Retrieving internal ip...")
+        args.addr = get_internal_ip()
+        print(args.addr)
+    print(f"tcp://{args.addr}:{args.port}")
+    xmp.spawn(_mp_fn, args=(args,), nprocs=args.ncores, start_method='fork')
 

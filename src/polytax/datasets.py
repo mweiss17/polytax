@@ -3,6 +3,7 @@ from torchvision import datasets, transforms
 import torch_xla.core.xla_model as xm
 
 def get_datasets(datadir, name):
+    print(os.path.join(datadir, str(xm.get_ordinal())))
     if name == "MNIST":
         train_dataset = datasets.MNIST(
             os.path.join(datadir, str(xm.get_ordinal())),

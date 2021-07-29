@@ -4,7 +4,7 @@ import torch_xla.distributed.xla_multiprocessing as xmp
 
 from argparser import get_args
 from network import get_internal_ip
-from train import train, _mp_fn
+from train import init_train
 
 
 args = get_args()
@@ -14,10 +14,9 @@ if not args.addr:
     args.addr = get_internal_ip()
     print(args.addr)
 print(f"tcp://{args.addr}:{args.port}")
-dist.init_process_group(backend="gloo", init_method=f"tcp://{args.addr}:{args.port}", rank=args.rank, world_size=args.size)
-xmp.spawn(_mp_fn, args=(args,), nprocs=args.ncores)
+#dist.init_process_group(backend="gloo", init_method=f"tcp://{args.addr}:{args.port}", rank=args.rank, world_size=args.size)
 # train(args, start)
-
+init_train(args)
 
 # def launch_local(args, start):
 #     processes = []
