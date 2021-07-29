@@ -116,6 +116,9 @@ def _mp_fn(index, args):
     print(f"index: {index}")
     print(f"xm index: {xm.get_ordinal()}")
     print(f"xm local index: {xm.get_local_ordinal()}")
+    
+    # dist.init_process_group(backend="gloo", init_method=f"tcp://{args.addr}:{args.port}", rank=index, world_size=args.size)
+    print(f"index: {index}, xmtorch dist rank: {dist.get_rank()}")
     accuracy = train(args)
     print(f"accuracy: {accuracy}")
     sys.exit(21)
