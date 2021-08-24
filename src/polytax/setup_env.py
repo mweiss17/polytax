@@ -6,7 +6,7 @@ def setup_env(args):
     stream = open("env.yaml", 'r')
     dictionary = yaml.load(stream)
     for key, value in dictionary["XRT_CONFIGS"].items():
-        print(f"{key}={value}")
+        print(f"export {key}={value}")
         os.environ[key] = value
     print("exported")
     os.system("unset LD_PRELOAD;")
