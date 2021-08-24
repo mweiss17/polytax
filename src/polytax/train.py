@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import numpy as np
@@ -10,6 +11,7 @@ import torch_xla.debug.metrics as met
 import torch_xla.distributed.parallel_loader as pl
 import torch_xla.test.test_utils as test_utils
 import torch_xla.distributed.xla_multiprocessing as xmp
+import torch_xla.core.xla_env_vars as xenv
 
 from datasets import get_datasets
 from models import MNISTModel
@@ -119,7 +121,7 @@ def _mp_fn(index, args):
     print(f"xm local index: {xm.get_local_ordinal()}")
     
     # dist.init_process_group(backend="gloo", init_method=f"tcp://{args.addr}:{args.port}", rank=index, world_size=args.size)
-    print(f"index: {index}, xmtorch dist rank: {dist.get_rank()}")
+    #print(f"index: {index}, xmtorch dist rank: {dist.get_rank()}")
     accuracy = train(args)
     print(f"accuracy: {accuracy}")
     sys.exit(21)
@@ -133,6 +135,7 @@ if __name__ == '__main__':
         args.addr = get_internal_ip()
         print(args.addr)
     print(f"tcp://{args.addr}:{args.port}")
-    setup_env()
+    setup_env(args)
+    print(os.environ[xenv.HOST_ORDINAL])    
     xmp.spawn(_mp_fn, args=(args,), nprocs=args.ncores, start_method='fork')
 
