@@ -21,9 +21,14 @@ setuptools.setup(
     packages=setuptools.find_packages(where="src"),
     python_requires=">=3.8",
     install_requires=[
-       'torch',
-       'numpy',
-       'tensorboardX',
+        'torch',
+        'numpy',
+        'tensorboardX',
+        'tensorflow',
+        'tensorflow_datasets',
+        'transformers',
+        'mesh_tensorflow',
+        't5',
     ]
 )
 
