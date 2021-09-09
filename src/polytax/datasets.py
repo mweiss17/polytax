@@ -9,6 +9,12 @@ DEFAULT_EXTRA_IDS = 100
 def get_default_vocabulary():
       return seqio.SentencePieceVocabulary(DEFAULT_SPM_PATH, DEFAULT_EXTRA_IDS)
 
+def perplexity(targets: Sequence[str], scores: Sequence[int]):
+  return {
+    "negative_log_perplexity": seqio.evaluation.Scalar(np.mean(scores))
+  }
+
+
 ## Setup dataset
 DEFAULT_OUTPUT_FEATURES = {
     "inputs": seqio.Feature(
@@ -29,7 +35,7 @@ seqio.TaskRegistry.add(
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
-    metric_fns=[])
+    metric_fns=[perplexity])
 
 
 seqio.TaskRegistry.add(
@@ -43,5 +49,18 @@ seqio.TaskRegistry.add(
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
-    metric_fns=[])
+    metric_fns=[perplexity])
 
+
+seqio.TaskRegistry.add(
+    "en.gcs",
+    seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir="gs://c4-datasets/"),
+    preprocessors=[
+        functools.partial(preprocessors.rekey, key_map={"inputs": None, "labels": "text"}),
+        seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
+        preprocessors.span_corruption,
+        seqio.preprocessors.append_eos_after_trim,
+    ],
+    output_features=DEFAULT_OUTPUT_FEATURES,
+    metric_fns=[perplexity])
