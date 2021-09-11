@@ -29,6 +29,7 @@ setuptools.setup(
         'transformers',
         'mesh_tensorflow',
         't5',
+        'seqio==0.0.5'
     ]
 )
 
