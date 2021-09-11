@@ -9,6 +9,11 @@ DEFAULT_EXTRA_IDS = 100
 def get_default_vocabulary():
       return seqio.SentencePieceVocabulary(DEFAULT_SPM_PATH, DEFAULT_EXTRA_IDS)
 
+def perplexity(targets, scores):
+  return {
+    "negative_log_perplexity": seqio.evaluation.Scalar(np.mean(scores))
+  }
+
 ## Setup dataset
 DEFAULT_OUTPUT_FEATURES = {
     "inputs": seqio.Feature(
@@ -33,8 +38,8 @@ seqio.TaskRegistry.add(
 
 
 seqio.TaskRegistry.add(
-    "realnewslike.local",
-    seqio.TfdsDataSource(tfds_name="c4/realnewslikey:3.0.1", tfds_data_dir="/tmp/c4-datasets/"),
+    "wikipedia.en",
+    seqio.TfdsDataSource(tfds_name="wikipedia/20201201.en:1.0.0"),
     preprocessors=[
         functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
         seqio.preprocessors.tokenize,
@@ -43,5 +48,4 @@ seqio.TaskRegistry.add(
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
-    metric_fns=[])
-
+    metric_fns=[perplexity])

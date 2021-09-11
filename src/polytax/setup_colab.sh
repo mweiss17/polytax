@@ -17,7 +17,7 @@ rm pyproject.toml
 pip3 install -e .[flax]
 
 cd ../polytax
-python3 setup.py install --user
+pip3 install -e .
 
 cd src/polytax
 
