@@ -26,7 +26,6 @@ setuptools.setup(
         'tensorboardX',
         'tensorflow',
         'tensorflow_datasets',
-        'transformers',
         'mesh_tensorflow',
         't5',
         'seqio==0.0.5'
