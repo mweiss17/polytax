@@ -4,4 +4,4 @@ logs.txt
 __pycache__/
 *.msgpack
 *egg-info
-experiments/*
+*experiments/*

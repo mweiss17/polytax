@@ -42,6 +42,7 @@ cd ~/polytax/src/polytax
 
 ln -s ~/transformers/examples/flax/language-modeling/t5_tokenizer_model.py t5_tokenizer_model.py
 ln -s ~/transformers/examples/flax/language-modeling/run_t5_mlm_flax.py run_t5_mlm_flax.py
+export WANDB_API_KEY=$(curl "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key" -H "Metadata-Flavor: Google")
 
 export $PATH=$PATH:/home/martin/.local/bin
 unset LD_PRELOAD

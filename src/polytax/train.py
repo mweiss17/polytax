@@ -84,7 +84,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.auto_setup()
         WandBMixin.WANDB_PROJECT = "polytax"
         WandBMixin.WANDB_ENTITY = "mweiss10"
-        if self.get("use_wandb"):
+        if self.get("wandb/use"):
             self.initialize_wandb()
         self._build()
 
@@ -100,7 +100,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model_config = self.get_model_config(self.get("model_config"))
         self.train_batch_size = int(self.get("per_device_train_batch_size")) * jax.device_count()
         self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * jax.device_count()
-
+        
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
 
@@ -154,9 +154,14 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
 
-
-        eval_dataset = task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
-                                              shuffle=True, seed=self.seed, num_epochs=100000)
+        try:
+            eval_dataset = task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
+                                                  shuffle=True, seed=self.seed, num_epochs=100000)
+        except Exception:
+            print("no validation set")
+            eval_dataset = task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
+                                                                      shuffle=True, seed=self.seed, num_epochs=100000)
+            
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -228,9 +233,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def checkpoint(self):
         if self.save_now and jax.process_index() == 0:
             params = jax.device_get(jax.tree_map(lambda x: x[0], self.state.params))
-
             self.model.save_pretrained(
-                self.get("output_dir"),
+                self.checkpoint_directory,
                 params=params,
                 push_to_hub=False,
                 commit_message=f"Saving weights and logs of step {self.step}"
@@ -249,14 +253,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
     def run(self):
+        start = time.time()
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
+            print(f"got samples: {time.time()-start}")
             self.state, train_metric, self.dropout_rngs = self.p_train_step(self.state, samples, self.dropout_rngs)
-
+            print(f"did train step: {time.time() - start}")
             if self.log_wandb_now and self.get("wandb/use") and jax.process_index() == 0:
                 train_metric = jax_utils.unreplicate(train_metric)
                 self.wandb_log(**train_metric)
-
+            
             if self.evaluate_now:
                 eval_metrics = []
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating ...", tag="eval"):
@@ -268,11 +274,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 eval_metrics = jax.tree_multimap(lambda *xs: list(xs), *eval_metrics)  # Transpose the tree
                 for k, v in eval_metrics.items():
                     eval_metrics[k] = jnp.mean(jnp.array(eval_metrics[k]))
-                if jax.process_index() == 0:
+                if jax.process_index() == 0 and self.get("use/wandb"):
                     self.wandb_log(**eval_metrics)
-
+            print(f"before checkpoint{time.time()-start}")
             self.checkpoint()
             self.next_step()
+            print(f"checkpointed: {time.time() - start}")
 
 if __name__ == '__main__':
     Experiment1().run()

@@ -1,9 +1,8 @@
 # Model and Paths
-model_type: "t5"
+model_type: "t5-base"
 model_name_or_path: None
 cache_dir: "./tmp/"
-output_dir: "./"
-model_config: "./configs/t5-config.json"
+model_config: "./configs/config.json"
 seed: 12345
 
 # Tokenizer
@@ -13,7 +12,7 @@ tokenizer:
     use_fast: True
 
 # Dataset and Batch Size
-dataset_name: "wikipedia.en"
+dataset_name: "realnewslike.gcs" #"wikipedia.en"
 max_seq_length: 512
 per_device_train_batch_size: 32
 per_device_eval_batch_size: 32
@@ -28,13 +27,13 @@ adam_beta1: 0.9
 adam_beta2: 0.999
 
 # Steps
-logging_steps: 30
-save_steps: 20
-eval_steps: 10
+logging_steps: 300
+save_steps: 20000
+eval_steps: 10000
 num_train_steps: 1000000
-num_eval_steps: 100
+num_eval_steps: 10
 
 # Logging
 wandb:
-  use: False
+  use: True
   log_every: 100
