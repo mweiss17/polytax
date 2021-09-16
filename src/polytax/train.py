@@ -145,24 +145,27 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         max_seq_length = min(self.get("max_seq_length"), self.tokenizer.model_max_length)
         sequence_length = {"inputs": max_seq_length, "targets": max_seq_length}
 
-        task = seqio.get_mixture_or_task(self.get("dataset_name"))
-        eos_keys = set(k for k, f in task.output_features.items() if f.add_eos)
+        self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
+        eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
 
-        train_dataset = task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True,
-                                         seed=self.seed, num_epochs=100000)
-        train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=task.output_features,
+        train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True,
+                                         seed=self.seed, num_epochs=1)
+        train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        start = time.time()
+        print("starting...")
+        print(next(train_dataset))
+        print(f"{time.time()-start}")
 
         try:
-            eval_dataset = task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
-                                                  shuffle=True, seed=self.seed, num_epochs=100000)
+            eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
+                                                  shuffle=True, seed=self.seed, num_epochs=1)
         except Exception:
             print("no validation set")
-            eval_dataset = task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
-                                                                      shuffle=True, seed=self.seed, num_epochs=100000)
-            
-        eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=task.output_features,
+            eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
+                                                                      shuffle=True, seed=self.seed, num_epochs=1)
+        eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
 
@@ -196,9 +199,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
 
         def loss_fn(params):
-            labels = batch.pop("targets")
+            targets = batch.pop("targets")
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
-            loss = optax.softmax_cross_entropy(logits, onehot(labels, logits.shape[-1])).mean()
+            loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1])).mean()
             return loss
 
         grad_fn = jax.value_and_grad(loss_fn)
@@ -212,12 +215,19 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return new_state, metrics, new_dropout_rng
 
     def eval_step(self, params, batch):
-        labels = batch.pop("targets")
+        targets = batch.pop("targets")
         logits = self.model(**batch, params=params, train=False)[0]
-        loss = optax.softmax_cross_entropy(logits, onehot(labels, logits.shape[-1]))
-        accuracy = jnp.equal(jnp.argmax(logits, axis=-1), labels)
+        loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1]))
+        accuracy = jnp.equal(jnp.argmax(logits, axis=-1), targets)
+
+        for metric_fn in self.task.metric_fns:
+            metric_result = metric_fn(targets, logits)
+            for metric_name, metric_value in metric_result.items():
+                tag = "eval/{}/{}".format(self.task.name, metric_name)
+                self.logger.info("%s at step %d: %.3f", tag, self.step, metric_value)
 
         # summarize metrics
+        import pdb; pdb.set_trace()
         metrics = {"loss": loss.mean(), "accuracy": accuracy.mean()}
         metrics = jax.lax.pmean(metrics, axis_name="batch")
         return metrics
@@ -254,6 +264,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def run(self):
         start = time.time()
+        import pdb; pdb.set_trace()
+
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
             print(f"got samples: {time.time()-start}")
