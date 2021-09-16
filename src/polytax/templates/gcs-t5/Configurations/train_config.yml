@@ -1,0 +1,40 @@
+# Model and Paths
+model_type: "t5"
+model_name_or_path: None
+cache_dir: "./tmp/"
+output_dir: "./"
+model_config: "./configs/t5-config.json"
+seed: 12345
+
+# Tokenizer
+tokenizer:
+  kwargs:
+    tokenizer_name: "./configs/"
+    use_fast: True
+
+# Dataset and Batch Size
+dataset_name: "wikipedia.en"
+max_seq_length: 512
+per_device_train_batch_size: 32
+per_device_eval_batch_size: 32
+
+# Optimization
+adafactor: "True"
+learning_rate: 0.005
+weight_decay: 0.001
+warmup_steps: 2000
+dtype: "float32"
+adam_beta1: 0.9
+adam_beta2: 0.999
+
+# Steps
+logging_steps: 30
+save_steps: 20
+eval_steps: 10
+num_train_steps: 1000000
+num_eval_steps: 100
+
+# Logging
+wandb:
+  use: False
+  log_every: 100
