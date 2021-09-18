@@ -5,15 +5,12 @@
 This module is designed to be usable on TPUs, locally on CPUs, and on colab.
 
 ## GCP TPU-VM:
-To install and start a job on a GCP TPU-VM, please run the script in `polytax/src/polytax/scripts/launch_tpu.sh`.
-
-If you have GCP all setup correctly, you can actually just run `polytax/src/polytax/scripts/launch.sh` and that will boot a TPU-VM node and launch a job on it.
-There's plenty more work to do on those scripts.
+If you have all the GCP stuff already setup, then you can ssh into your TPU-VM and install everyting and launch a job using the script in `polytax/src/polytax/scripts/launch_tpu.sh`. There's another script called `boot_tpu_vm_jobs.sh` which handles the actually spooling up of the TPU-VM node, 
+but it still needs work for others to use it (though it works for me pretty well).
 
 ## Local:
-TODO: 
-- make local script similar to `polytax/src/polytax/scripts/launch_tpu.sh`
-- Update README
+git clone this project, then navigate into `polytax/src/polytax/scripts/`, and find the `setup_local.sh` file. This file assumes you're installing the package into your home directory. I'm lazy, so I haven't integrated this with `setup.py` or made it installation directory agnostic. You are more than welcome to do so. Once you've run that, theoretically you should be ready to get down to training. 
+
 
 ## Colab:
 TODO: 
@@ -34,7 +31,7 @@ After installation, to run a tiny experiment, just call:
 
 This instructs SpeedRun to read the experimental configuration file from `templates/t5-xs-shakespeare/Configurations/train_config.yaml`, and
 to copy it over to a folder called `experiments/t5-xs-shakeyshake`. The logs and model checkpoints will get saved there too. 
-The metrics should be logged to W&B, too.
+The metrics should be logged to W&B, too. If you want to log stuff to WANDB, you're going to need to get your WANDB api key and `export WANDB_API_KEY=<yourkey>`
 
 # Switch Transformer
 The Switch Transformer code will be implemented in [this fork of the HuggingFace Transformer repository](https://github.com/mweiss17/transformers).
