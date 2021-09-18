@@ -1,3 +1,5 @@
+############### BOOT GCP TPU-VM JOBS ################
+
 # Read inputs
 ROOTID=${1:-"0"}
 NUMNODES=${2:-2}
