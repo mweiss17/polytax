@@ -25,11 +25,12 @@ DEFAULT_OUTPUT_FEATURES = {
 }
 
 seqio.TaskRegistry.add(
-    "realnewslike.gcs",
+    "realnewslike.en",
     seqio.TfdsDataSource(tfds_name="c4/realnewslike:3.0.1", tfds_data_dir="gs://c4-datasets/"),
     preprocessors=[
         functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
         seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],
@@ -43,6 +44,7 @@ seqio.TaskRegistry.add(
     preprocessors=[
         functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
         seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],
@@ -55,24 +57,25 @@ seqio.TaskRegistry.add(
     preprocessors=[
         functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
         seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[perplexity])
 
-# import seqio
-# import functools
-# from t5.data import preprocessors
-#
-# ## Setup vocab / tokenizer
-# DEFAULT_SPM_PATH = "gs://t5-data/vocabs/cc_all.32000/sentencepiece.model"  # GCS
-# DEFAULT_EXTRA_IDS = 100
-#
-#
-# seqio.TaskRegistry.add("tiny_shakespeare", seqio.TfdsDataSource(tfds_name="tiny_shakespeare:1.0.0"), output_features={"inputs": seqio.Feature(vocabulary=seqio.SentencePieceVocabulary(DEFAULT_SPM_PATH, DEFAULT_EXTRA_IDS), add_eos=True, required=False),    "targets": seqio.Feature(vocabulary=seqio.SentencePieceVocabulary(DEFAULT_SPM_PATH, DEFAULT_EXTRA_IDS), add_eos=True)}, preprocessors=[        functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),seqio.preprocessors.tokenize, seqio.CacheDatasetPlaceholder()])
-# task = seqio.get_mixture_or_task("tiny_shakespeare")
-#
-# dset = task.get_dataset({"inputs": 10, "targets": 10})
-#
-# print(next(iter(dset)))
+seqio.TaskRegistry.add(
+    "c4.en",
+    seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir="gs://c4-datasets/"),
+    preprocessors=[
+        functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
+        seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
+        preprocessors.span_corruption,
+        seqio.preprocessors.append_eos_after_trim,
+    ],
+    output_features=DEFAULT_OUTPUT_FEATURES,
+    metric_fns=[])
+
+
+

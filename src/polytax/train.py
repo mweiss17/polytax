@@ -21,6 +21,7 @@ https://huggingface.co/models?filter=t5
 """
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
+import itertools
 import os
 import sys
 import time
@@ -33,6 +34,7 @@ from tqdm import tqdm
 
 import flax
 import jax
+from jax import jit
 import jax.numpy as jnp
 import jax.profiler
 import optax
@@ -153,10 +155,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        start = time.time()
-        print("starting...")
-        print(next(train_dataset))
-        print(f"{time.time()-start}")
+        train_dataset = itertools.cycle(train_dataset)
 
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
@@ -168,11 +167,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        eval_dataset = itertools.cycle(eval_dataset)
 
         return train_dataset, eval_dataset
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
-        if model_config:
+
+        if type(model_config) == dict: # pass it in directly from yaml
+            model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
+            model_config = T5Config.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=len(self.tokenizer))
+        elif model_config:
             model_config = T5Config.from_pretrained(
                 model_config, cache_dir=self.cache_dir, vocab_size=len(self.tokenizer)
             )
@@ -219,16 +223,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         logits = self.model(**batch, params=params, train=False)[0]
         loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1]))
         accuracy = jnp.equal(jnp.argmax(logits, axis=-1), targets)
+        metrics = {"loss": loss.mean(), "accuracy": accuracy.mean(), "step": self.step}
 
-        for metric_fn in self.task.metric_fns:
-            metric_result = metric_fn(targets, logits)
-            for metric_name, metric_value in metric_result.items():
-                tag = "eval/{}/{}".format(self.task.name, metric_name)
-                self.logger.info("%s at step %d: %.3f", tag, self.step, metric_value)
-
-        # summarize metrics
-        import pdb; pdb.set_trace()
-        metrics = {"loss": loss.mean(), "accuracy": accuracy.mean()}
         metrics = jax.lax.pmean(metrics, axis_name="batch")
         return metrics
 
@@ -263,14 +259,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
     def run(self):
-        start = time.time()
-        import pdb; pdb.set_trace()
 
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
-            print(f"got samples: {time.time()-start}")
             self.state, train_metric, self.dropout_rngs = self.p_train_step(self.state, samples, self.dropout_rngs)
-            print(f"did train step: {time.time() - start}")
             if self.log_wandb_now and self.get("wandb/use") and jax.process_index() == 0:
                 train_metric = jax_utils.unreplicate(train_metric)
                 self.wandb_log(**train_metric)
@@ -288,10 +280,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                     eval_metrics[k] = jnp.mean(jnp.array(eval_metrics[k]))
                 if jax.process_index() == 0 and self.get("use/wandb"):
                     self.wandb_log(**eval_metrics)
-            print(f"before checkpoint{time.time()-start}")
             self.checkpoint()
             self.next_step()
-            print(f"checkpointed: {time.time() - start}")
 
 if __name__ == '__main__':
     Experiment1().run()
