@@ -1,4 +1,6 @@
 **Disclaimer**: This project is actively being developed and no assurances are provided about the functionality of the codebase. Please file an issue when stuff breaks. **
+#### Important Links:
+- [Link to Project HackMD](https://hackmd.io/GAASXaUfQvW9AzwTq8G12w)
 
 # Installation
 
