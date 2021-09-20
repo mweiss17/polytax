@@ -1,6 +1,5 @@
 # Model and Paths
 model_type: "t5-small"
-model_name_or_path: None
 cache_dir: "/tmp/"
 seed: 12345
 
@@ -26,15 +25,15 @@ adam_beta1: 0.9
 adam_beta2: 0.999
 
 # Steps
-logging_steps: 30
-save_steps: 20
-eval_steps: 10
-num_train_steps: 1000000
-num_eval_steps: 50
+logging_steps: 1
+save_steps: 1
+eval_steps: 1
+num_train_steps: 3
+num_eval_steps: 3
 
 # Logging
 wandb:
-  use: True
+  use: False
   log_every: 100
 
 # Model Config

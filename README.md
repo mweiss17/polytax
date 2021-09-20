@@ -39,3 +39,10 @@ The metrics should be logged to W&B, too. If you want to log stuff to WANDB, you
 The Switch Transformer code will be implemented in [this fork of the HuggingFace Transformer repository](https://github.com/mweiss17/transformers).
 Currently, I just copied the T5 files over into a new models module here: `transformers/src/transformers/models/switch/` and changed the name.
 Haven't even tried to import anything into the polytax module from it yet.
+
+# Recovering from pre-emption (tbd. extend to finetuning case)
+
+Let's say you want to recover from pre-emption, or to otherwise load your model from a checkpoint. 
+To achieve this, simply point to the configuration file which should be recorded in `experiments/<name>/Weights/`.
+The way you pass this information in through the command line is as follows, using `config.model_name_or_path`.
+`python3 train.py ./experiments/t5-3 --inherit templates/t5-xs-shakespeare/ --config.model_name_or_path experiments/t5-shakespeare-3/Weights/`

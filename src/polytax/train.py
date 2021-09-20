@@ -22,25 +22,13 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
 import itertools
-import os
-import sys
-import time
-import functools
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional
-import numpy as np
-from tqdm import tqdm
-
-import flax
 import jax
-from jax import jit
 import jax.numpy as jnp
 import jax.profiler
 import optax
 from flax import jax_utils, traverse_util
 from flax.training import train_state
-from flax.training.common_utils import get_metrics, onehot, shard
+from flax.training.common_utils import onehot, shard
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
 from transformers import (
@@ -54,8 +42,8 @@ from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from mesh_tensorflow.transformer.dataset import pack_or_pad
 import tensorflow as tf
 import seqio
-from polytax import dataset # Keep this, it imports seqio datasets
 from speedrun import BaseExperiment, WandBMixin, IOMixin
+from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 
 
 def setup_logging():
@@ -92,20 +80,19 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _build(self):
         self.logger = setup_logging()
-        self.logger.info(f"Run parameters {self.get('')}")
-
+        # self.logger.info(f"Run parameters {self.get('')}")
+        print(f"{self._config}")
         self.seed = self.get("seed")
         set_seed(self.seed)
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
-        self.model_config = self.get_model_config(self.get("model_config"))
+        self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         self.train_batch_size = int(self.get("per_device_train_batch_size")) * jax.device_count()
         self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * jax.device_count()
         
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
-
         self.rng = jax.random.PRNGKey(self.seed)
         self.dropout_rngs = jax.random.split(self.rng, jax.local_device_count())
         self.model = FlaxT5ForConditionalGeneration(self.model_config, seed=self.seed, dtype=getattr(jnp, self.get("dtype")))
@@ -172,17 +159,14 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return train_dataset, eval_dataset
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
-
-        if type(model_config) == dict: # pass it in directly from yaml
+        if model_name_or_path: # if we're loading an already trained model
+            model_config = T5Config.from_pretrained(model_name_or_path)
+        elif type(model_config) == dict: # pass it in directly from yaml
             model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
             model_config = T5Config.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=len(self.tokenizer))
         elif model_config:
             model_config = T5Config.from_pretrained(
                 model_config, cache_dir=self.cache_dir, vocab_size=len(self.tokenizer)
-            )
-        elif model_name_or_path:
-            model_config = T5Config.from_pretrained(
-                model_name_or_path, self.cache_dir, vocab_size=len(self.tokenizer)
             )
         else:
             model_config = CONFIG_MAPPING[self.model_type]()
