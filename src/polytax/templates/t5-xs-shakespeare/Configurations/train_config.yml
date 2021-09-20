@@ -1,13 +1,13 @@
 # Model and Paths
 model_type: "t5-small"
 model_name_or_path: None
-cache_dir: "./tmp/"
+cache_dir: "/tmp/"
 seed: 12345
 
 # Tokenizer
 tokenizer:
   kwargs:
-    tokenizer_name: "./configs/"
+    tokenizer_name: "./tokenizer/"
     use_fast: True
 
 # Dataset and Batch Size

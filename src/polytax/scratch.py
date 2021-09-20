@@ -1,3 +1,4 @@
+# Random scratch file for martin
 import time
 import jax.numpy as jnp
 from jax import grad, jit, vmap

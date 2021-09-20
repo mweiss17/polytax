@@ -27,5 +27,3 @@ python3 setup.py install
 cd ~/polytax/
 python3 setup.py install --user
 
-cd ~/polytax/src/polytax
-

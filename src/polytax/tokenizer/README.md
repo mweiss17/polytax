@@ -1,0 +1,2 @@
+config.json is just here to please HuggingFace's AutoTokenizer (which expects a config.json with a model_type key).
+tokenizer.json is trained on c4.realnewslike using the scripts in this folder. We probably want to train a new tokenizer.
