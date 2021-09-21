@@ -29,7 +29,6 @@ for epoch in range(num_epochs):
   print("Training set accuracy {}".format(train_acc))
   print("Test set accuracy {}".format(test_acc))
 
-conda install -c huggingface -c conda-forge datasets
 GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/datasets/allenai/c4
 cd c4
 git lfs pull --include realnewslike

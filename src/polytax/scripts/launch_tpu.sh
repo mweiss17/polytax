@@ -16,13 +16,8 @@ pip3 install wandb
 pip3 install tensorboardX
 pip3 install dill
 pip3 install tensorflow-hub
-pip3 install seqio
-pip3 install t5
-
 
 python3 -m pip install --upgrade build
-#pip3 install wheel
-#python3 setup.py bdist_wheel --user
 
 cd ~/
 git clone https://github.com/mweiss17/transformers.git
@@ -33,7 +28,7 @@ pip3 install -e .[flax]
 cd ~/
 git clone https://github.com/nasimrahaman/speedrun.git
 cd speedrun/
-python3 setup.py install --user
+ye ye ye | python3 setup.py install --user
 
 cd ~/polytax/
 python3 setup.py install --user
@@ -41,7 +36,7 @@ python3 setup.py install --user
 cd ~/polytax/src/polytax
 export WANDB_API_KEY=$(curl "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key" -H "Metadata-Flavor: Google")
 
-export $PATH=$PATH:/home/$USER/.local/bin
+export PATH=$PATH:/home/$USER/.local/bin
 unset LD_PRELOAD
 export XRT_TPU_CONFIG="localservice;0;localhost:51011"
 
