@@ -15,13 +15,14 @@ pip3 install google-cloud
 pip3 install wandb
 pip3 install tensorboardX
 pip3 install dill
-pip install tensorflow-hub
+pip3 install tensorflow-hub
 pip3 install seqio
+pip3 install t5
 
 
 python3 -m pip install --upgrade build
-pip3 install wheel
-python3 setup.py bdist_wheel
+#pip3 install wheel
+#python3 setup.py bdist_wheel --user
 
 cd ~/
 git clone https://github.com/mweiss17/transformers.git
@@ -32,7 +33,7 @@ pip3 install -e .[flax]
 cd ~/
 git clone https://github.com/nasimrahaman/speedrun.git
 cd speedrun/
-python3 setup.py install
+python3 setup.py install --user
 
 cd ~/polytax/
 python3 setup.py install --user
