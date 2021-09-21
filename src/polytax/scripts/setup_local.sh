@@ -8,6 +8,7 @@ pip3 install google-cloud
 pip3 install wandb
 pip3 install tensorboardX
 pip3 install dill
+pip3 install seqio
 
 python3 -m pip install --upgrade build
 pip3 install wheel
@@ -18,6 +19,7 @@ git clone https://github.com/mweiss17/transformers.git
 cd ~/transformers/
 rm pyproject.toml
 pip3 install -e .[flax]
+
 
 cd ~/
 git clone https://github.com/nasimrahaman/speedrun.git

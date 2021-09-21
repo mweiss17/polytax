@@ -15,6 +15,9 @@ pip3 install google-cloud
 pip3 install wandb
 pip3 install tensorboardX
 pip3 install dill
+pip install tensorflow-hub
+pip3 install seqio
+
 
 python3 -m pip install --upgrade build
 pip3 install wheel

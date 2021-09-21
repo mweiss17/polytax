@@ -3,49 +3,57 @@
 # Read inputs
 ROOTID=${1:-"0"}
 NUMNODES=${2:-2}
-NETWORK=${3:-"tpu-network"}
-SUBNETWORK=${4:-"swarm-2"}
-RANGE=${5:-"192.169.0.0/29"}
-
+EXPNAME=${3:"experiments/t5-xs-shakespeare-test"}
+TEMPLATENAME=${4:"templates/t5-xs-shakespeare"}
+NETWORK=${5:-"tpu-network"}
+SUBNETWORK=${6:-"swarm-2"}
+RANGE=${7:-"192.169.0.0/29"}
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
 
-# Boot the root node (i.e. control plane)
-#gcloud alpha compute tpus tpu-vm create "node-$ROOTID" \
-#  --zone us-central1-f \
-#  --network $NETWORK \
-#  --subnetwork $SUBNETWORK \
-#  --range $RANGE \
-#  --accelerator-type v2-8 \
-#  --version v2-alpha \
-#  --metadata=startup-script="#! /bin/bash
-#    export XRT_TPU_CONFIG='localservice;0;localhost:51011'; unset LD_PRELOAD; cd /home/root; git clone https://github.com/mweiss17/polytax.git; cd polytax; python3 -m pip install --upgrade build; cd src/polytax; python3 launch.py --rank=0 --addr=$CONTROLIP --port=2345 >> /home/root/polytax/logs.txt
-#  "
+# Boot control plane node
+gcloud alpha compute tpus tpu-vm create "node-$ROOTID" \
+  --zone us-central1-f \
+  --network $NETWORK \
+  --subnetwork $SUBNETWORK \
+  --range $RANGE \
+  --accelerator-type v2-8 \
+  --version v2-alpha \
+  --metadata=startup-script="#! /bin/bash
+    export XRT_TPU_CONFIG='localservice;0;localhost:51011'; unset LD_PRELOAD;
+  "
 
-# Get internal-ip for the controlling node
-#CONTROLIP=$(gcloud alpha compute tpus describe node-0 --format='get(ipAddress)')
-#echo $CONTROLIP
-#for i in $(seq 1 $(($NUMNODES-1))); do
-#  NODENAME="node-$(($i+$ROOTID))"
-#  echo creating $NODENAME
-#
-#  # Spool up a TPU node
-#  gcloud alpha compute tpus tpu-vm create $NODENAME \
-#  --zone us-central1-f \
-#  --network $NETWORK \
-#  --subnetwork $SUBNETWORK \
-#  --range $RANGE \
-#  --accelerator-type v2-8 \
-#  --version v2-alpha \
-#  --async
-#done
+# Get internal-ip for the control plane node
+CONTROLIP=$(gcloud alpha compute tpus describe "node-$ROOTID" --format='get(ipAddress)')
+echo $CONTROLIP
 
+# Boot all the other nodes (if booting more than one
+for i in $(seq 1 $(($NUMNODES-1))); do
+  NODENAME="node-$(($i+$ROOTID))"
+  echo creating $NODENAME
+
+  # Spool up a TPU node
+  gcloud alpha compute tpus tpu-vm create $NODENAME \
+  --zone us-central1-f \
+  --network $NETWORK \
+  --subnetwork $SUBNETWORK \
+  --range $RANGE \
+  --accelerator-type v2-8 \
+  --version v2-alpha \
+  --async
+done
+
+# ssh into each node and setup polytax
 for i in $(seq 0 $(($NUMNODES-1))); do
   NODENAME="node-$(($i+$ROOTID))"
   echo running startup script on $NODENAME
 
-  gcloud alpha compute tpus tpu-vm ssh $NODENAME --zone us-central1-f --command "cd ~/; git clone https://github.com/mweiss17/polytax.git; cd polytax; chmod 755 src/polytax/*.sh; cd src/polytax; ./launch_tpu.sh  $i"
+  gcloud alpha compute tpus tpu-vm ssh $NODENAME --zone us-central1-f --command "cd ~/; git clone https://github.com/mweiss17/polytax.git; chmod 755 polytax/src/polytax/scripts/*.sh; ./polytax/src/polytax/scripts/launch_tpu.sh $i localhost $EXPNAME $TEMPLATENAME"
 
 done
+
+
+# Poll and check for pre-empted. If pre-empted, then
+#curl -sfH 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/preempted'
 
 
 # Connect to Cloud TPU
