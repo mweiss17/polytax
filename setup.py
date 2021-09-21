@@ -28,7 +28,7 @@ setuptools.setup(
         'tensorflow_datasets',
         'mesh_tensorflow',
         't5',
-        'seqio'
+        'seqio==0.0.5'
     ]
 )
 

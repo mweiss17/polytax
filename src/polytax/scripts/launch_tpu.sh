@@ -15,7 +15,6 @@ pip3 install google-cloud
 pip3 install wandb
 pip3 install tensorboardX
 pip3 install dill
-pip3 install tensorflow-hub
 
 python3 -m pip install --upgrade build
 
@@ -31,7 +30,7 @@ cd speedrun/
 ye ye ye | python3 setup.py install --user
 
 cd ~/polytax/
-python3 setup.py install --user
+pip3 install -e . # for some reason this fails if we python3 setup.py install --user
 
 cd ~/polytax/src/polytax
 export WANDB_API_KEY=$(curl "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key" -H "Metadata-Flavor: Google")
