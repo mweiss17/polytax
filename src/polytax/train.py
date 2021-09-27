@@ -30,11 +30,12 @@ from flax import jax_utils, traverse_util
 from flax.training import train_state
 from flax.training.common_utils import onehot, shard
 from tensorflow.python.ops.numpy_ops import np_config
+from tqdm import tqdm
 np_config.enable_numpy_behavior()
 from transformers import (
     CONFIG_MAPPING,
     AutoTokenizer,
-    FlaxT5ForConditionalGeneration,
+    T5ForConditionalGeneration,
     T5Config,
     set_seed,
 )
@@ -45,6 +46,13 @@ import seqio
 from speedrun import BaseExperiment, WandBMixin, IOMixin
 from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 
+
+# Imports for Torch
+import torch
+import torch.distributed as dist
+import torch.optim as optim
+import torch.nn as nn
+from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 
 def setup_logging():
     logging.basicConfig(
@@ -76,6 +84,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         WandBMixin.WANDB_ENTITY = "mweiss10"
         if self.get("wandb/use"):
             self.initialize_wandb()
+        # Not for TPU 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._build()
 
     def _build(self):
@@ -88,46 +98,80 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
-        self.train_batch_size = int(self.get("per_device_train_batch_size")) * jax.device_count()
-        self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * jax.device_count()
+        if xla_found is False:
+            self.train_batch_size = int(self.get("per_device_train_batch_size"))
+            self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
+        else:
+            self.train_batch_size = int(self.get("per_device_train_batch_size")) * xm.xrt_world_size()
+            self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * xm.xrt_world_size()
         
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
-        self.rng = jax.random.PRNGKey(self.seed)
-        self.dropout_rngs = jax.random.split(self.rng, jax.local_device_count())
-        self.model = FlaxT5ForConditionalGeneration(self.model_config, seed=self.seed, dtype=getattr(jnp, self.get("dtype")))
+        
+        #self.rng = jax.random.PRNGKey(self.seed)
+        #self.dropout_rngs = jax.random.split(self.rng, jax.local_device_count())
+        self.model = T5ForConditionalGeneration(self.model_config, seed=self.seed)
 
         # Create learning rate schedule
-        warmup_fn = optax.linear_schedule(
-            init_value=0.0, end_value=self.get("learning_rate"), transition_steps=self.get("warmup_steps")
-        )
-        decay_fn = optax.linear_schedule(
-            init_value=self.get("learning_rate"),
-            end_value=0,
-            transition_steps=self.get("num_train_steps") - self.get("warmup_steps"),
-        )
-        self.linear_decay_lr_schedule_fn = optax.join_schedules(
-            schedules=[warmup_fn, decay_fn], boundaries=[self.get("warmup_steps")]
-        )
+        # warmup_fn = optax.linear_schedule(
+        #     init_value=0.0, end_value=self.get("learning_rate"), transition_steps=self.get("warmup_steps")
+        # )
+        # decay_fn = optax.linear_schedule(
+        #     init_value=self.get("learning_rate"),
+        #     end_value=0,
+        #     transition_steps=self.get("num_train_steps") - self.get("warmup_steps"),
+        # )
+        # self.linear_decay_lr_schedule_fn = optax.join_schedules(
+        #     schedules=[warmup_fn, decay_fn], boundaries=[self.get("warmup_steps")]
+        # )
 
+        # if self.get("adafactor"):
+        #     # We use the default parameters here to initialize adafactor,
+        #     # For more details about the parameters please check https://github.com/deepmind/optax/blob/ed02befef9bf81cbbf236be3d2b0e032e9ed4a40/optax/_src/alias.py#L74
+        #     optimizer = optax.adafactor(
+        #         learning_rate=self.linear_decay_lr_schedule_fn,
+        #     )
+        # else:
+        #     optimizer = optax.adamw(learning_rate=self.linear_decay_lr_schedule_fn, b1=self.get("adam_beta1"),
+        #         b2=self.get("adam_beta2"), weight_decay=self.get("weight_decay"), mask=decay_mask_fn,
+        #     )
+
+        # Add scheduler WIP
         if self.get("adafactor"):
-            # We use the default parameters here to initialize adafactor,
-            # For more details about the parameters please check https://github.com/deepmind/optax/blob/ed02befef9bf81cbbf236be3d2b0e032e9ed4a40/optax/_src/alias.py#L74
-            optimizer = optax.adafactor(
-                learning_rate=self.linear_decay_lr_schedule_fn,
+            # replace AdamW with Adafactor
+            self.optimizer = Adafactor(
+                self.model.parameters(),
+                lr=1e-3,
+                eps=(1e-30, 1e-3),
+                clip_threshold=1.0,
+                decay_rate=-0.8,
+                beta1=None,
+                weight_decay=0.0,
+                relative_step=False,
+                scale_parameter=False,
+                warmup_init=False
             )
-        else:
-            optimizer = optax.adamw(learning_rate=self.linear_decay_lr_schedule_fn, b1=self.get("adam_beta1"),
-                b2=self.get("adam_beta2"), weight_decay=self.get("weight_decay"), mask=decay_mask_fn,
+        else: 
+            self.optimizer = AdamW(
+                self.model.parameters(),
+                lr=1e-3,
+                eps=(1e-30, 1e-3),
+                clip_threshold=1.0,
+                decay_rate=-0.8,
+                beta1=None,
+                weight_decay=0.0,
+                relative_step=False,
+                scale_parameter=False,
+                warmup_init=False
             )
 
         # Create parallel version of the train step
-        self.p_train_step = jax.pmap(self.train_step, "batch", donate_argnums=(0,))
-        self.p_eval_step = jax.pmap(self.eval_step, "batch", donate_argnums=(0,))
+        #self.p_train_step = jax.pmap(self.train_step, "batch", donate_argnums=(0,))
+        #self.p_eval_step = jax.pmap(self.eval_step, "batch", donate_argnums=(0,))
 
         # Setup and replicate the train state on each device
-        state = train_state.TrainState.create(apply_fn=self.model.__call__, params=self.model.params, tx=optimizer)
-        self.state = jax_utils.replicate(state)
+        #state = train_state.TrainState.create(apply_fn=self.model.__call__, params=self.model.params, tx=optimizer)
+        #self.state = jax_utils.replicate(state)
 
     def _build_loaders(self):
         # determine maximum sequence length to use
@@ -183,34 +227,102 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             )
         return tokenizer
 
-    def train_step(self, state, batch, dropout_rng):
-        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+    def train_slow_step(self, state, batch):
+        #_build_loaders
+        pass
 
-        def loss_fn(params):
-            targets = batch.pop("targets")
-            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
-            loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1])).mean()
-            return loss
+def run(self):
+    for epoch in tqdm(range(self.get("num_epochs")), desc="epochs..."):
+        # Train the model
+        for batch in tqdm(self.train_dataset, desc="batches..."):
+            batch = batch.to(self.device)
+            x_hat = self.model(batch)
+            # TODO change loss function
+            print("This should print")
+            loss = self.model.loss_function(
+                x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
+            )
+            self.optimizer.zero_grad()
+    
+            loss.backward()
+            self.optimizer.step()
+            self.next_step()
+            if self.get("use_wandb"):
+                self.wandb_log(**{"train_loss": loss})
+                self.wandb_log(**{"lr": self.scheduler.get_lr()[0]})
 
-        grad_fn = jax.value_and_grad(loss_fn)
-        loss, grad = grad_fn(state.params)
-        grad = jax.lax.pmean(grad, "batch")
-        new_state = state.apply_gradients(grads=grad)
+        self.next_epoch()
+        self.scheduler.step()
 
-        metrics = jax.lax.pmean(
-            {"loss": loss, "learning_rate": self.linear_decay_lr_schedule_fn(state.step)}, axis_name="batch"
-        )
-        return new_state, metrics, new_dropout_rng
+        # log gradients once per epoch
+        if self.get("use_wandb"):
+            self.wandb_watch(self.model, loss, log_freq=1)
 
-    def eval_step(self, params, batch):
-        targets = batch.pop("targets")
-        logits = self.model(**batch, params=params, train=False)[0]
-        loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1]))
-        accuracy = jnp.equal(jnp.argmax(logits, axis=-1), targets)
-        metrics = {"loss": loss.mean(), "accuracy": accuracy.mean(), "step": self.step}
+        # Checkpoint
+        if epoch % self.get("checkpoint_every") == 0:
+            torch.save(
+                self.model.state_dict(),
+                open(f"{self.experiment_directory}/Weights/model-{epoch}.pt", "wb"),
+            )
 
-        metrics = jax.lax.pmean(metrics, axis_name="batch")
-        return metrics
+        # Run Validation
+        if epoch % self.get("valid_every") == 0:
+            self.model.eval()
+            for valbatch in tqdm(self.valid, "valid batches..."):
+                valbatch = valbatch.to(self.device)
+                x_hat, input, mu, log_var = self.model(valbatch)
+                loss = self.model.loss_function(
+                    x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
+                )
+                if self.get("use_wandb"):
+                    self.wandb_log(**{"valid_loss": loss})
+                    self.wandb_log(**{"lr": self.scheduler.get_lr()})
+
+            self.model.train()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def train_fast_step(self, state, batch):
+        pass
+    # def train_step(self, state, batch, dropout_rng):
+    #     dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+
+    #     def loss_fn(params):
+    #         targets = batch.pop("targets")
+    #         logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+    #         loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1])).mean()
+    #         return loss
+
+    #     grad_fn = jax.value_and_grad(loss_fn)
+    #     loss, grad = grad_fn(state.params)
+    #     grad = jax.lax.pmean(grad, "batch")
+    #     new_state = state.apply_gradients(grads=grad)
+
+    #     metrics = jax.lax.pmean(
+    #         {"loss": loss, "learning_rate": self.linear_decay_lr_schedule_fn(state.step)}, axis_name="batch"
+    #     )
+    #     return new_state, metrics, new_dropout_rng
+
+    # def eval_step(self, params, batch):
+    #     targets = batch.pop("targets")
+    #     logits = self.model(**batch, params=params, train=False)[0]
+    #     loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1]))
+    #     accuracy = jnp.equal(jnp.argmax(logits, axis=-1), targets)
+    #     metrics = {"loss": loss.mean(), "accuracy": accuracy.mean(), "step": self.step}
+
+    #     metrics = jax.lax.pmean(metrics, axis_name="batch")
+    #     return metrics
 
     @property
     def evaluate_now(self):
@@ -220,15 +332,15 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def save_now(self):
         return self.step % self.get("save_steps") == 0 and self.step > 0
 
-    def checkpoint(self):
-        if self.save_now and jax.process_index() == 0:
-            params = jax.device_get(jax.tree_map(lambda x: x[0], self.state.params))
-            self.model.save_pretrained(
-                self.checkpoint_directory,
-                params=params,
-                push_to_hub=False,
-                commit_message=f"Saving weights and logs of step {self.step}"
-            )
+    # def checkpoint(self):
+    #     if self.save_now and jax.process_index() == 0:
+    #         params = jax.device_get(jax.tree_map(lambda x: x[0], self.state.params))
+    #         self.model.save_pretrained(
+    #             self.checkpoint_directory,
+    #             params=params,
+    #             push_to_hub=False,
+    #             commit_message=f"Saving weights and logs of step {self.step}"
+    #         )
 
     def get_samples(self, iterable_dataset):
         samples = next(iterable_dataset)
@@ -242,30 +354,42 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return samples
 
 
-    def run(self):
+    # def run(self):
 
-        for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
-            samples = self.get_samples(self.train_dataset)
-            self.state, train_metric, self.dropout_rngs = self.p_train_step(self.state, samples, self.dropout_rngs)
-            if self.log_wandb_now and self.get("wandb/use") and jax.process_index() == 0:
-                train_metric = jax_utils.unreplicate(train_metric)
-                self.wandb_log(**train_metric)
+    #     for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+    #         samples = self.get_samples(self.train_dataset)
+    #         self.state, train_metric, self.dropout_rngs = self.p_train_step(self.state, samples, self.dropout_rngs)
+    #         if self.log_wandb_now and self.get("wandb/use") and jax.process_index() == 0:
+    #             train_metric = jax_utils.unreplicate(train_metric)
+    #             self.wandb_log(**train_metric)
             
-            if self.evaluate_now:
-                eval_metrics = []
-                for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating ...", tag="eval"):
-                    samples = self.get_samples(self.eval_dataset)
-                    metrics = self.p_eval_step(self.state.params, samples)
-                    eval_metrics.append(metrics)
+    #         if self.evaluate_now:
+    #             eval_metrics = []
+    #             for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating ...", tag="eval"):
+    #                 samples = self.get_samples(self.eval_dataset)
+    #                 metrics = self.p_eval_step(self.state.params, samples)
+    #                 eval_metrics.append(metrics)
 
-                eval_metrics = jax_utils.unreplicate(eval_metrics)
-                eval_metrics = jax.tree_multimap(lambda *xs: list(xs), *eval_metrics)  # Transpose the tree
-                for k, v in eval_metrics.items():
-                    eval_metrics[k] = jnp.mean(jnp.array(eval_metrics[k]))
-                if jax.process_index() == 0 and self.get("use/wandb"):
-                    self.wandb_log(**eval_metrics)
-            self.checkpoint()
-            self.next_step()
+    #             eval_metrics = jax_utils.unreplicate(eval_metrics)
+    #             eval_metrics = jax.tree_multimap(lambda *xs: list(xs), *eval_metrics)  # Transpose the tree
+    #             for k, v in eval_metrics.items():
+    #                 eval_metrics[k] = jnp.mean(jnp.array(eval_metrics[k]))
+    #             if jax.process_index() == 0 and self.get("use/wandb"):
+    #                 self.wandb_log(**eval_metrics)
+    #         self.checkpoint()
+    #         self.next_step()
 
 if __name__ == '__main__':
+    global xla_found
+    try: 
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+        import torch_xla.distributed.parallel_loader as pl
+        import torch_xla.test.test_utils as test_utils
+        import torch_xla.distributed.xla_multiprocessing as xmp
+        import torch_xla.core.xla_env_vars as xenv
+        xla_found = True
+    except:
+        print("XLA not found\n")
+        xla_found = False
     Experiment1().run()
