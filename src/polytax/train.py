@@ -110,7 +110,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         
         #self.rng = jax.random.PRNGKey(self.seed)
         #self.dropout_rngs = jax.random.split(self.rng, jax.local_device_count())
-        self.model = T5ForConditionalGeneration(self.model_config, seed=self.seed)
+        self.model = T5ForConditionalGeneration(self.model_config)
 
         # Create learning rate schedule
         # warmup_fn = optax.linear_schedule(
@@ -231,19 +231,22 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         #_build_loaders
         pass
 
-def run(self):
-    for epoch in tqdm(range(self.get("num_epochs")), desc="epochs..."):
-        # Train the model
-        for batch in tqdm(self.train_dataset, desc="batches..."):
-            batch = batch.to(self.device)
-            x_hat = self.model(batch)
+    def run(self):
+        for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+            samples = self.get_samples(self.train_dataset)
+        # for epoch in tqdm(range(self.get("num_epochs")), desc="epochs..."):
+            # Train the model
+            # for batch in tqdm(self.train_dataset, desc="batches..."):
+            # samples = samples.to(self.device)
+            import pdb; pdb.set_trace()
+            x_hat = self.model(samples)
             # TODO change loss function
             print("This should print")
             loss = self.model.loss_function(
                 x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
             )
             self.optimizer.zero_grad()
-    
+
             loss.backward()
             self.optimizer.step()
             self.next_step()
@@ -251,34 +254,34 @@ def run(self):
                 self.wandb_log(**{"train_loss": loss})
                 self.wandb_log(**{"lr": self.scheduler.get_lr()[0]})
 
-        self.next_epoch()
-        self.scheduler.step()
+            self.next_epoch()
+            self.scheduler.step()
 
-        # log gradients once per epoch
-        if self.get("use_wandb"):
-            self.wandb_watch(self.model, loss, log_freq=1)
+            # log gradients once per epoch
+            if self.get("use_wandb"):
+                self.wandb_watch(self.model, loss, log_freq=1)
 
-        # Checkpoint
-        if epoch % self.get("checkpoint_every") == 0:
-            torch.save(
-                self.model.state_dict(),
-                open(f"{self.experiment_directory}/Weights/model-{epoch}.pt", "wb"),
-            )
-
-        # Run Validation
-        if epoch % self.get("valid_every") == 0:
-            self.model.eval()
-            for valbatch in tqdm(self.valid, "valid batches..."):
-                valbatch = valbatch.to(self.device)
-                x_hat, input, mu, log_var = self.model(valbatch)
-                loss = self.model.loss_function(
-                    x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
+            # Checkpoint
+            if epoch % self.get("checkpoint_every") == 0:
+                torch.save(
+                    self.model.state_dict(),
+                    open(f"{self.experiment_directory}/Weights/model-{epoch}.pt", "wb"),
                 )
-                if self.get("use_wandb"):
-                    self.wandb_log(**{"valid_loss": loss})
-                    self.wandb_log(**{"lr": self.scheduler.get_lr()})
 
-            self.model.train()
+            # Run Validation
+            if epoch % self.get("valid_every") == 0:
+                self.model.eval()
+                for valbatch in tqdm(self.valid, "valid batches..."):
+                    valbatch = valbatch.to(self.device)
+                    x_hat, input, mu, log_var = self.model(valbatch)
+                    loss = self.model.loss_function(
+                        x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
+                    )
+                    if self.get("use_wandb"):
+                        self.wandb_log(**{"valid_loss": loss})
+                        self.wandb_log(**{"lr": self.scheduler.get_lr()})
+
+                self.model.train()
 
 
 
