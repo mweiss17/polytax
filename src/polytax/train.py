@@ -238,8 +238,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             # Train the model
             # for batch in tqdm(self.train_dataset, desc="batches..."):
             # samples = samples.to(self.device)
-            import pdb; pdb.set_trace()
-            x_hat = self.model(samples)
+            #import pdb; pdb.set_trace()
+            x_hat = self.model(input_ids=samples["input_ids"],labels=samples["labels"])
             # TODO change loss function
             print("This should print")
             loss = self.model.loss_function(
