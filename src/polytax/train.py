@@ -239,7 +239,17 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             # for batch in tqdm(self.train_dataset, desc="batches..."):
             # samples = samples.to(self.device)
             #import pdb; pdb.set_trace()
-            x_hat = self.model(input_ids=samples["input_ids"],labels=samples["labels"])
+
+
+
+            print("Logging shapes \n")
+            input_ids = torch.tensor(samples["input_ids"], dtype=torch.long).view(1,16)
+            target_ids = torch.tensor(samples["targets"], dtype=torch.long).view(1,16)
+            decoder_ip_ids = torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(1,16)
+            print("input_ids shape", input_ids.size())
+            print("targets shape", target_ids.size())
+            print("decoder_input_ids shape", decoder_ip_ids.size())
+            x_hat = self.model(input_ids=input_ids,labels=target_ids, decoder_input_ids=decoder_ip_ids)
             # TODO change loss function
             print("This should print")
             loss = self.model.loss_function(
