@@ -79,10 +79,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _build(self):
         self.logger = setup_logging()
-        # self.logger.info(f"Run parameters {self.get('')}")
         print(f"{self._config}")
         self.seed = self.get("seed")
-        set_seed(self.seed)
+        set_seed(self.seed) # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
@@ -96,7 +95,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
-        # TODO: add rng setting
         self.model = T5ForConditionalGeneration(self.model_config)
 
         # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
@@ -172,15 +170,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
-
-            # TODO checkout the tokenization https://huggingface.co/transformers/model_doc/t5.html#training and replace the seqio tokenizer in dataset.py with ours (try to make it faster)
-            input_ids = torch.tensor(samples["input_ids"], dtype=torch.long).view(-1,self.get("max_seq_length"))
-            target_ids = torch.tensor(samples["targets"], dtype=torch.long).view(-1,self.get("max_seq_length"))
-            decoder_ip_ids = torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(-1,self.get("max_seq_length"))
-            print("input_ids shape", input_ids.size())
-            print("targets shape", target_ids.size())
-            print("decoder_input_ids shape", decoder_ip_ids.size())
-            x_hat = self.model(input_ids=input_ids, labels=target_ids, decoder_input_ids=decoder_ip_ids)
+            x_hat = self.model(**samples)
             self.optimizer.zero_grad()
             x_hat.loss.backward()
 
@@ -205,13 +195,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
                     samples = self.get_samples(self.eval_dataset)
-                    input_ids = torch.tensor(samples["input_ids"], dtype=torch.long).view(-1,
-                                                                                          self.get("max_seq_length"))
-                    target_ids = torch.tensor(samples["targets"], dtype=torch.long).view(-1, self.get("max_seq_length"))
-                    decoder_ip_ids = torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(-1, self.get(
-                        "max_seq_length"))
-
-                    x_hat, input, mu, log_var = self.model(input_ids=input_ids, labels=target_ids, decoder_input_ids=decoder_ip_ids)
+                    x_hat, input, mu, log_var = self.model(**samples)
                     if self.get("use_wandb"):
                         self.wandb_log(**{"valid_loss": x_hat.loss.detach()})
 
@@ -225,6 +209,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def save_now(self):
         return self.step % self.get("save_steps") == 0 and self.step > 0
 
+    # TODO add checkpoints
     # def checkpoint(self):
     #     if self.save_now and jax.process_index() == 0:
     #         params = jax.device_get(jax.tree_map(lambda x: x[0], self.state.params))
@@ -237,13 +222,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def get_samples(self, iterable_dataset):
         samples = next(iterable_dataset)
-        samples = shard(samples)
-        # TODO: incorporate this into the seqio preprocessor
+        shape = (-1, self.get("max_seq_length"))
         samples["decoder_input_ids"] = shift_tokens_right(samples['targets'],
                                                           self.model.config.pad_token_id,
                                                           self.model.config.decoder_start_token_id)
-        samples = {"targets": samples['targets'], "input_ids": samples["inputs"],
-                   "decoder_input_ids": samples["decoder_input_ids"]}
+        samples = {"input_ids": torch.tensor(samples["inputs"], dtype=torch.long).view(shape),
+         "labels": torch.tensor(samples["targets"], dtype=torch.long).view(shape),
+         "decoder_input_ids": torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(shape)}
         return samples
 
 

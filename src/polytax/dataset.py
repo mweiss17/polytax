@@ -66,7 +66,8 @@ seqio.TaskRegistry.add(
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],
-    output_features=DEFAULT_OUTPUT_FEATURES,
+    output_features={"inputs": seqio.Feature(vocabulary=get_default_vocabulary(), add_eos=True, required=False),
+                     "targets": seqio.Feature(vocabulary=get_default_vocabulary(), add_eos=True)},
     metric_fns=[perplexity])
 
 seqio.TaskRegistry.add(
