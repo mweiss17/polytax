@@ -38,6 +38,7 @@ from transformers import (
     T5ForConditionalGeneration,
     T5Config,
     set_seed,
+    get_linear_schedule_with_warmup,
 )
 from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from mesh_tensorflow.transformer.dataset import pack_or_pad
@@ -52,6 +53,7 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 import torch.nn as nn
+import torch_lr_scheduler
 from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 
 def setup_logging():
@@ -112,58 +114,21 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         #self.dropout_rngs = jax.random.split(self.rng, jax.local_device_count())
         self.model = T5ForConditionalGeneration(self.model_config)
 
-        # Create learning rate schedule
-        # warmup_fn = optax.linear_schedule(
-        #     init_value=0.0, end_value=self.get("learning_rate"), transition_steps=self.get("warmup_steps")
-        # )
-        # decay_fn = optax.linear_schedule(
-        #     init_value=self.get("learning_rate"),
-        #     end_value=0,
-        #     transition_steps=self.get("num_train_steps") - self.get("warmup_steps"),
-        # )
-        # self.linear_decay_lr_schedule_fn = optax.join_schedules(
-        #     schedules=[warmup_fn, decay_fn], boundaries=[self.get("warmup_steps")]
-        # )
+        # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
+        #  https://github.com/pytorch/fairseq/blob/main/fairseq/optim/lr_scheduler/inverse_square_root_schedule.py
+        self.optimizer = Adafactor(
+            self.model.parameters(),
+            # lr=self.get("learning_rate"),
+            eps=(1e-30, 1e-3),
+            clip_threshold=1.0,
+            decay_rate=-0.8,
+            beta1=None,
+            weight_decay=0.0,
+            relative_step=True,
+            scale_parameter=True,
+            warmup_init=True
+        )
 
-        # if self.get("adafactor"):
-        #     # We use the default parameters here to initialize adafactor,
-        #     # For more details about the parameters please check https://github.com/deepmind/optax/blob/ed02befef9bf81cbbf236be3d2b0e032e9ed4a40/optax/_src/alias.py#L74
-        #     optimizer = optax.adafactor(
-        #         learning_rate=self.linear_decay_lr_schedule_fn,
-        #     )
-        # else:
-        #     optimizer = optax.adamw(learning_rate=self.linear_decay_lr_schedule_fn, b1=self.get("adam_beta1"),
-        #         b2=self.get("adam_beta2"), weight_decay=self.get("weight_decay"), mask=decay_mask_fn,
-        #     )
-
-        # Add scheduler WIP
-        if self.get("adafactor"):
-            # replace AdamW with Adafactor
-            self.optimizer = Adafactor(
-                self.model.parameters(),
-                lr=1e-3,
-                eps=(1e-30, 1e-3),
-                clip_threshold=1.0,
-                decay_rate=-0.8,
-                beta1=None,
-                weight_decay=0.0,
-                relative_step=False,
-                scale_parameter=False,
-                warmup_init=False
-            )
-        else: 
-            self.optimizer = AdamW(
-                self.model.parameters(),
-                lr=1e-3,
-                eps=(1e-30, 1e-3),
-                clip_threshold=1.0,
-                decay_rate=-0.8,
-                beta1=None,
-                weight_decay=0.0,
-                relative_step=False,
-                scale_parameter=False,
-                warmup_init=False
-            )
 
         # Create parallel version of the train step
         #self.p_train_step = jax.pmap(self.train_step, "batch", donate_argnums=(0,))
@@ -234,62 +199,48 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
-        # for epoch in tqdm(range(self.get("num_epochs")), desc="epochs..."):
-            # Train the model
-            # for batch in tqdm(self.train_dataset, desc="batches..."):
-            # samples = samples.to(self.device)
-            #import pdb; pdb.set_trace()
 
-
-
-            print("Logging shapes \n")
-            input_ids = torch.tensor(samples["input_ids"], dtype=torch.long).view(1,16)
-            target_ids = torch.tensor(samples["targets"], dtype=torch.long).view(1,16)
-            decoder_ip_ids = torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(1,16)
+            # TODO checkout the tokenization https://huggingface.co/transformers/model_doc/t5.html#training and replace the seqio tokenizer in dataset.py with ours (try to make it faster)
+            input_ids = torch.tensor(samples["input_ids"], dtype=torch.long).view(-1,self.get("max_seq_length"))
+            target_ids = torch.tensor(samples["targets"], dtype=torch.long).view(-1,self.get("max_seq_length"))
+            decoder_ip_ids = torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(-1,self.get("max_seq_length"))
             print("input_ids shape", input_ids.size())
             print("targets shape", target_ids.size())
             print("decoder_input_ids shape", decoder_ip_ids.size())
-            x_hat = self.model(input_ids=input_ids,labels=target_ids, decoder_input_ids=decoder_ip_ids)
-            # TODO change loss function
-            print("This should print")
-            loss = self.model.loss_function(
-                x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
-            )
+            x_hat = self.model(input_ids=input_ids, labels=target_ids, decoder_input_ids=decoder_ip_ids)
             self.optimizer.zero_grad()
+            x_hat.loss.backward()
 
-            loss.backward()
             self.optimizer.step()
             self.next_step()
             if self.get("use_wandb"):
-                self.wandb_log(**{"train_loss": loss})
-                self.wandb_log(**{"lr": self.scheduler.get_lr()[0]})
-
-            self.next_epoch()
-            self.scheduler.step()
+                self.wandb_log(**{"train_loss": x_hat.loss.detach()})
 
             # log gradients once per epoch
             if self.get("use_wandb"):
-                self.wandb_watch(self.model, loss, log_freq=1)
+                self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
 
             # Checkpoint
-            if epoch % self.get("checkpoint_every") == 0:
+            if self.step % self.get("checkpoint_every") == 0:
                 torch.save(
                     self.model.state_dict(),
-                    open(f"{self.experiment_directory}/Weights/model-{epoch}.pt", "wb"),
+                    open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
                 )
 
             # Run Validation
-            if epoch % self.get("valid_every") == 0:
+            if self.step % self.get("eval_every") == 0:
                 self.model.eval()
-                for valbatch in tqdm(self.valid, "valid batches..."):
-                    valbatch = valbatch.to(self.device)
-                    x_hat, input, mu, log_var = self.model(valbatch)
-                    loss = self.model.loss_function(
-                        x_hat, input, mu, log_var, M_N=self.get("dataloader/batch_size")
-                    )
+                for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
+                    samples = self.get_samples(self.eval_dataset)
+                    input_ids = torch.tensor(samples["input_ids"], dtype=torch.long).view(-1,
+                                                                                          self.get("max_seq_length"))
+                    target_ids = torch.tensor(samples["targets"], dtype=torch.long).view(-1, self.get("max_seq_length"))
+                    decoder_ip_ids = torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(-1, self.get(
+                        "max_seq_length"))
+
+                    x_hat, input, mu, log_var = self.model(input_ids=input_ids, labels=target_ids, decoder_input_ids=decoder_ip_ids)
                     if self.get("use_wandb"):
-                        self.wandb_log(**{"valid_loss": loss})
-                        self.wandb_log(**{"lr": self.scheduler.get_lr()})
+                        self.wandb_log(**{"valid_loss": x_hat.loss.detach()})
 
                 self.model.train()
 
