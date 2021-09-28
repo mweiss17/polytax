@@ -65,19 +65,6 @@ def setup_logging():
     logger = logging.getLogger(__name__)
     return logger
 
-# We use Optax's "masking" functionality to not apply weight decay
-# to bias and LayerNorm scale parameters. decay_mask_fn returns a
-# mask boolean with the same structure as the parameters.
-# The mask is True for parameters that should be decayed.
-def decay_mask_fn(params):
-    flat_params = traverse_util.flatten_dict(params)
-    flat_mask = {
-        path: (path[-1] != "bias" and path[-2:] not in [("layer_norm", "scale"), ("final_layer_norm", "scale")])
-        for path in flat_params
-    }
-    return traverse_util.unflatten_dict(flat_mask)
-
-
 class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def __init__(self):
         super(Experiment1, self).__init__()
@@ -109,9 +96,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
-        
-        #self.rng = jax.random.PRNGKey(self.seed)
-        #self.dropout_rngs = jax.random.split(self.rng, jax.local_device_count())
+        # TODO: add rng setting
         self.model = T5ForConditionalGeneration(self.model_config)
 
         # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
@@ -129,14 +114,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             warmup_init=True
         )
 
-
-        # Create parallel version of the train step
-        #self.p_train_step = jax.pmap(self.train_step, "batch", donate_argnums=(0,))
-        #self.p_eval_step = jax.pmap(self.eval_step, "batch", donate_argnums=(0,))
-
-        # Setup and replicate the train state on each device
-        #state = train_state.TrainState.create(apply_fn=self.model.__call__, params=self.model.params, tx=optimizer)
-        #self.state = jax_utils.replicate(state)
 
     def _build_loaders(self):
         # determine maximum sequence length to use
@@ -192,10 +169,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             )
         return tokenizer
 
-    def train_slow_step(self, state, batch):
-        #_build_loaders
-        pass
-
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
@@ -244,50 +217,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
                 self.model.train()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    def train_fast_step(self, state, batch):
-        pass
-    # def train_step(self, state, batch, dropout_rng):
-    #     dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
-
-    #     def loss_fn(params):
-    #         targets = batch.pop("targets")
-    #         logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
-    #         loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1])).mean()
-    #         return loss
-
-    #     grad_fn = jax.value_and_grad(loss_fn)
-    #     loss, grad = grad_fn(state.params)
-    #     grad = jax.lax.pmean(grad, "batch")
-    #     new_state = state.apply_gradients(grads=grad)
-
-    #     metrics = jax.lax.pmean(
-    #         {"loss": loss, "learning_rate": self.linear_decay_lr_schedule_fn(state.step)}, axis_name="batch"
-    #     )
-    #     return new_state, metrics, new_dropout_rng
-
-    # def eval_step(self, params, batch):
-    #     targets = batch.pop("targets")
-    #     logits = self.model(**batch, params=params, train=False)[0]
-    #     loss = optax.softmax_cross_entropy(logits, onehot(targets, logits.shape[-1]))
-    #     accuracy = jnp.equal(jnp.argmax(logits, axis=-1), targets)
-    #     metrics = {"loss": loss.mean(), "accuracy": accuracy.mean(), "step": self.step}
-
-    #     metrics = jax.lax.pmean(metrics, axis_name="batch")
-    #     return metrics
-
     @property
     def evaluate_now(self):
         return self.step % self.get("eval_steps") == 0 and self.step > 0
@@ -318,30 +247,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return samples
 
 
-    # def run(self):
-
-    #     for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
-    #         samples = self.get_samples(self.train_dataset)
-    #         self.state, train_metric, self.dropout_rngs = self.p_train_step(self.state, samples, self.dropout_rngs)
-    #         if self.log_wandb_now and self.get("wandb/use") and jax.process_index() == 0:
-    #             train_metric = jax_utils.unreplicate(train_metric)
-    #             self.wandb_log(**train_metric)
-            
-    #         if self.evaluate_now:
-    #             eval_metrics = []
-    #             for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating ...", tag="eval"):
-    #                 samples = self.get_samples(self.eval_dataset)
-    #                 metrics = self.p_eval_step(self.state.params, samples)
-    #                 eval_metrics.append(metrics)
-
-    #             eval_metrics = jax_utils.unreplicate(eval_metrics)
-    #             eval_metrics = jax.tree_multimap(lambda *xs: list(xs), *eval_metrics)  # Transpose the tree
-    #             for k, v in eval_metrics.items():
-    #                 eval_metrics[k] = jnp.mean(jnp.array(eval_metrics[k]))
-    #             if jax.process_index() == 0 and self.get("use/wandb"):
-    #                 self.wandb_log(**eval_metrics)
-    #         self.checkpoint()
-    #         self.next_step()
 
 if __name__ == '__main__':
     global xla_found
