@@ -22,15 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
 import itertools
-import jax
-import jax.numpy as jnp
-import jax.profiler
-import optax
-from flax import jax_utils, traverse_util
-from flax.training import train_state
-from flax.training.common_utils import onehot, shard
 from tensorflow.python.ops.numpy_ops import np_config
-from tqdm import tqdm
 np_config.enable_numpy_behavior()
 from transformers import (
     CONFIG_MAPPING,
@@ -38,7 +30,6 @@ from transformers import (
     T5ForConditionalGeneration,
     T5Config,
     set_seed,
-    get_linear_schedule_with_warmup,
 )
 from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from mesh_tensorflow.transformer.dataset import pack_or_pad
@@ -50,11 +41,7 @@ from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 
 # Imports for Torch
 import torch
-import torch.distributed as dist
-import torch.optim as optim
-import torch.nn as nn
-import torch_lr_scheduler
-from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
+from transformers.optimization import Adafactor
 
 def setup_logging():
     logging.basicConfig(
