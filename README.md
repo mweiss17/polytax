@@ -36,9 +36,13 @@ The metrics should be logged to W&B, too. If you want to log stuff to WANDB, you
 
 ## Multi-node computation
 We use [torch.distributed](https://pytorch.org/docs/stable/distributed.html) to achieve multi-tpu training. We also make use of [torch.distributed.run](https://pytorch.org/docs/stable/elastic/quickstart.html) to launch and manage fault-tolerant multi-node clusters. 
-The syntax to run such a job (on GCP TPU-VMs) is:
+The syntax to run a multi-host job (on GCP TPU-VMs) is:
+
 `python3 -m torch.distributed.run --nnodes=2 --nproc_per_node=2 --rdzv_id=1 --rdzv_backend=c10d --rdzv_endpoint="<ip>:<port>"  train.py experiments/t5-3 --inherit templates/t5-xs-shakespeare/`
 
+If you want to work on this locally, then simply run:
+
+python3 -m torch.distributed.run --nnodes=1 --nproc_per_node=2 --rdzv_id=1 --rdzv_backend=c10d --rdzv_endpoint=localhost train.py experiments/t5-3 --inherit templates/t5-xs-shakespeare/
 
 
 # Switch Transformer
