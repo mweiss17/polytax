@@ -28,7 +28,17 @@ setuptools.setup(
         'tensorflow_datasets',
         'mesh_tensorflow',
         't5',
-        'seqio==0.0.5'
+        'seqio==0.0.5',
+        'clu',
+        'tbp-nightly',
+        'google-cloud',
+        'wandb',
+        'tensorboardX',
+        'dill',
+        'torch_lr_scheduler',
+        'speedrun @ git+ssh://git@github.com/inferno-pytorch/speedrun@master#egg=speedrun',
+        'transformers @ git+ssh://git@github.com/mweiss17/transformers@master#egg=transformers'
+
     ]
 )
 
