@@ -7,6 +7,8 @@ expname=$3
 templatename=$4
 echo rank: $rank, addr: $addr, experiment_name: $expname, template_name: $templatename
 
+curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
+
 cd ~/polytax/
 pip3 install -e . # for some reason this fails if we python3 setup.py install --user
 

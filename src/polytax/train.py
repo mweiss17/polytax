@@ -21,6 +21,7 @@ https://huggingface.co/models?filter=t5
 """
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
+import os
 import itertools
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
@@ -38,10 +39,23 @@ import seqio
 from speedrun import BaseExperiment, WandBMixin, IOMixin
 from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 
-
-# Imports for Torch
 import torch
+import torch.distributed as dist
 from transformers.optimization import Adafactor
+
+global xla_found
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.debug.metrics as met
+    import torch_xla.distributed.parallel_loader as pl
+    import torch_xla.test.test_utils as test_utils
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.core.xla_env_vars as xenv
+
+    xla_found = True
+except:
+    print("XLA not found\n")
+    xla_found = False
 
 def setup_logging():
     logging.basicConfig(
@@ -60,8 +74,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         WandBMixin.WANDB_ENTITY = "mweiss10"
         if self.get("wandb/use"):
             self.initialize_wandb()
-        # Not for TPU 
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Check for the LOCAL_RANK env var, which must be set for distributed computation
+        self.is_distributed = True if os.environ.get("LOCAL_RANK", None) else False
+
+        # hook up with the other processes
+        if self.is_distributed:
+            dist.init_process_group(backend=self.get("backend"))
+
         self._build()
 
     def _build(self):
@@ -73,13 +95,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
-        if xla_found is False:
-            self.train_batch_size = int(self.get("per_device_train_batch_size"))
-            self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
-        else:
+        if xla_found:
             self.train_batch_size = int(self.get("per_device_train_batch_size")) * xm.xrt_world_size()
             self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * xm.xrt_world_size()
-        
+        else:
+            self.train_batch_size = int(self.get("per_device_train_batch_size"))
+            self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
+
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config)
@@ -108,13 +130,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
 
-        train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True,
-                                         seed=self.seed, num_epochs=1)
+        train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
+        if self.is_distributed:
+            train_dataset = train_dataset.shard(num_shards=dist.get_world_size(), index=dist.get_rank())
         train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
-
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -122,11 +144,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print("no validation set")
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
                                                                       shuffle=True, seed=self.seed, num_epochs=1)
+        if self.is_distributed:
+            eval_dataset = eval_dataset.shard(num_shards=dist.get_world_size(), index=dist.get_rank())
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         eval_dataset = itertools.cycle(eval_dataset)
-
         return train_dataset, eval_dataset
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
@@ -154,12 +177,27 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             )
         return tokenizer
 
+    def reduce_gradients(self):
+        if not self.is_distributed:
+            return
+
+        # AllReduce the model gradients so we can step the global gradient
+        for param in self.model.parameters():
+            if param.grad is not None:
+                # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()}")
+                torch.distributed.all_reduce(param.grad)
+                # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()} after")
+
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
-            x_hat = self.model(**samples)
             self.optimizer.zero_grad()
+
+            x_hat = self.model(**samples)
+
             x_hat.loss.backward()
+
+            self.reduce_gradients()
 
             self.optimizer.step()
             self.next_step()
@@ -221,16 +259,4 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
 if __name__ == '__main__':
-    global xla_found
-    try: 
-        import torch_xla.core.xla_model as xm
-        import torch_xla.debug.metrics as met
-        import torch_xla.distributed.parallel_loader as pl
-        import torch_xla.test.test_utils as test_utils
-        import torch_xla.distributed.xla_multiprocessing as xmp
-        import torch_xla.core.xla_env_vars as xenv
-        xla_found = True
-    except:
-        print("XLA not found\n")
-        xla_found = False
     Experiment1().run()
