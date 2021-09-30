@@ -77,13 +77,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Check for the LOCAL_RANK env var, which must be set for distributed computation
-        self.is_distributed = True if os.environ.get("LOCAL_RANK", None) else False
-
-        # hook up with the other processes
-        if self.is_distributed:
-            dist.init_process_group(backend=self.get("backend"))
-
         self._build()
 
     def _build(self):
@@ -189,6 +182,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()} after")
 
     def run(self):
+        return
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
             self.optimizer.zero_grad()
@@ -257,6 +251,22 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return samples
 
 
+def _mp_fn(index, args):
+    print(f"mp index: {index}, xla_device: {xm.xla_device()}")
+    print(f"torch dist: {args['dist']}")
+    Experiment1().run()
 
 if __name__ == '__main__':
-    Experiment1().run()
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    # Check for the LOCAL_RANK env var, which must be set for distributed computation
+    is_distributed = True if os.environ.get("LOCAL_RANK", None) else False
+
+    # hook up with the other processes
+    if is_distributed:
+        dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
+ 
+    if True:
+        xmp.spawn(_mp_fn, args=({"dist": dist},), nprocs=8)
+    else:
+        Experiment1().run()
