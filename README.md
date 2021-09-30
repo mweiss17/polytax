@@ -11,15 +11,14 @@ If you have all the GCP stuff already setup, then you can ssh into your TPU-VM a
 but it still needs work for others to use it (though it works for me pretty well).
 
 ## Local:
-git clone this project, then navigate into `polytax/src/polytax/scripts/`, and find the `setup_local.sh` file. This file assumes you're installing the package into your home directory. I'm lazy, so I haven't integrated this with `setup.py` or made it installation directory agnostic. You are more than welcome to do so. Once you've run that, theoretically you should be ready to get down to training. 
+git clone this project, then call `pip install -e .`. 
+Next, you can 
 
 
 ## Colab:
 TODO: 
-- [Fix the colab (happy to pair program with anyone who wants to use colab for their development)](https://colab.research.google.com/drive/17jZ11mJ9IJMSJjRyF9lX_uzILMwUIIIs#scrollTo=tOODe1db_86X
-). I wrote it while I was refactoring, but it needs a bit more love.
-- Update this section of the README
-
+- [Fix the colab (happy to pair program with anyone who wants to use colab for their development)](https://colab.research.google.com/drive/17jZ11mJ9IJMSJjRyF9lX_uzILMwUIIIs#scrollTo=tOODe1db_86X)
+- 
 # Training
 
 In `train.py` you will find code for data loading, tokenization, training, and evaluation. 
