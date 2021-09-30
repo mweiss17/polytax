@@ -34,6 +34,13 @@ This instructs SpeedRun to read the experimental configuration file from `templa
 to copy it over to a folder called `experiments/t5-xs-shakeyshake`. The logs and model checkpoints will get saved there too. 
 The metrics should be logged to W&B, too. If you want to log stuff to WANDB, you're going to need to get your WANDB api key and `export WANDB_API_KEY=<yourkey>`
 
+## Multi-node computation
+We use [torch.distributed](https://pytorch.org/docs/stable/distributed.html) to achieve multi-tpu training. We also make use of [torch.distributed.run](https://pytorch.org/docs/stable/elastic/quickstart.html) to launch and manage fault-tolerant multi-node clusters. 
+The syntax to run such a job (on GCP TPU-VMs) is:
+`python3 -m torch.distributed.run --nnodes=2 --nproc_per_node=2 --rdzv_id=1 --rdzv_backend=c10d --rdzv_endpoint="<ip>:<port>"  train.py experiments/t5-3 --inherit templates/t5-xs-shakespeare/`
+
+
+
 # Switch Transformer
 The Switch Transformer code will be implemented in [this fork of the HuggingFace Transformer repository](https://github.com/mweiss17/transformers).
 Currently, I just copied the T5 files over into a new models module here: `transformers/src/transformers/models/switch/` and changed the name.
