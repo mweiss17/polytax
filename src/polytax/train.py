@@ -185,7 +185,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         for param in self.model.parameters():
             if param.grad is not None:
                 # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()}")
-                torch.distributed.all_reduce(param.grad)
+                dist.all_reduce(param.grad / dist.get_world_size())
                 # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()} after")
 
     def run(self):
