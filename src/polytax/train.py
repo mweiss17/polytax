@@ -45,16 +45,16 @@ from transformers.optimization import Adafactor
 
 global xla_found
 try:
+    import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
     import torch_xla.test.test_utils as test_utils
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_env_vars as xenv
-
     xla_found = True
-except:
-    print("XLA not found\n")
+except Exception as e:
+    print(f"XLA not found {e} \n")
     xla_found = False
 
 def setup_logging():
@@ -77,6 +77,18 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        self.total_shards = int(os.environ.get("WORLD_SIZE")) * xm.xrt_world_size()
+        print(f"ordinal {xm.get_ordinal()}")
+        print(f"total shards: {self.total_shards}")
+        self.dist_index = int(os.environ.get("RANK")) * int(xm.xrt_world_size()) + int(xm.get_ordinal())
+        print(f"self.dist_index: {self.dist_index}")
+        self.is_multi_host = True if int(os.environ.get("WORLD_SIZE", 0)) > 1 else False
+        print(f"is_multi_host: {self.is_multi_host}")
+       
+        # one process per host  
+        if self.is_multi_host and xm.is_master_ordinal():
+            dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
+
         self._build()
 
     def _build(self):
@@ -89,8 +101,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         if xla_found:
-            self.train_batch_size = int(self.get("per_device_train_batch_size")) * xm.xrt_world_size()
-            self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * xm.xrt_world_size()
+            self.train_batch_size = int(self.get("per_device_train_batch_size")) * self.total_shards
+            self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * self.total_shards
         else:
             self.train_batch_size = int(self.get("per_device_train_batch_size"))
             self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
@@ -122,10 +134,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
-
+        print(f"idx: {self.dist_index}")
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
-        if self.is_distributed:
-            train_dataset = train_dataset.shard(num_shards=dist.get_world_size(), index=dist.get_rank())
+        train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
         train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -137,8 +148,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print("no validation set")
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
                                                                       shuffle=True, seed=self.seed, num_epochs=1)
-        if self.is_distributed:
-            eval_dataset = eval_dataset.shard(num_shards=dist.get_world_size(), index=dist.get_rank())
+        eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -171,18 +181,24 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return tokenizer
 
     def reduce_gradients(self):
-        if not self.is_distributed:
+        if not self.is_multi_host:
             return
 
         # AllReduce the model gradients so we can step the global gradient
         for param in self.model.parameters():
             if param.grad is not None:
-                # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()}")
-                dist.all_reduce(param.grad / dist.get_world_size())
-                # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()} after")
+                print(f"rank: {xm.get_rank()}, param.grad: {param.grad.sum()}")
+                xm.all_reduce(param.grad / xm.xrt_world_size())
+                print(f"rank: {xm.get_rank()}, param.grad: {param.grad.sum()} after")
+                if self.is_multi_host:
+                    if xm.is_master_ordinal():
+                        dist.all_reduce(param.grad / dist.get_world_size()) 
+                        xm.all_reduce(param.grad)
+                    else:
+                        zeros = torch.zeros_like(param.grad)
+                        xm.all_reduce(zeros)    
 
     def run(self):
-        return
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = self.get_samples(self.train_dataset)
             self.optimizer.zero_grad()
@@ -252,21 +268,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
 def _mp_fn(index, args):
-    print(f"mp index: {index}, xla_device: {xm.xla_device()}")
-    print(f"torch dist: {args['dist']}")
     Experiment1().run()
 
 if __name__ == '__main__':
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.xla_multiprocessing as xmp
-    # Check for the LOCAL_RANK env var, which must be set for distributed computation
-    is_distributed = True if os.environ.get("LOCAL_RANK", None) else False
-
-    # hook up with the other processes
-    if is_distributed:
-        dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
- 
     if True:
-        xmp.spawn(_mp_fn, args=({"dist": dist},), nprocs=8)
+        xmp.spawn(_mp_fn, args=({},), nprocs=8)
     else:
         Experiment1().run()
