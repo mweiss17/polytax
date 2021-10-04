@@ -100,16 +100,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
-        if xla_found:
-            self.train_batch_size = int(self.get("per_device_train_batch_size")) * self.total_shards
-            self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * self.total_shards
-        else:
-            self.train_batch_size = int(self.get("per_device_train_batch_size"))
-            self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
+        self.train_batch_size = int(self.get("per_device_train_batch_size")) * self.total_shards
+        self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * self.total_shards
 
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config)
+        self.model.to(xm.xla_device())
 
         # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
         #  https://github.com/pytorch/fairseq/blob/main/fairseq/optim/lr_scheduler/inverse_square_root_schedule.py
@@ -181,59 +178,66 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return tokenizer
 
     def reduce_gradients(self):
-        if not self.is_multi_host:
-            return
-
         # AllReduce the model gradients so we can step the global gradient
-        for param in self.model.parameters():
-            if param.grad is not None:
-                print(f"rank: {xm.get_rank()}, param.grad: {param.grad.sum()}")
-                xm.all_reduce(param.grad / xm.xrt_world_size())
-                print(f"rank: {xm.get_rank()}, param.grad: {param.grad.sum()} after")
-                if self.is_multi_host:
-                    if xm.is_master_ordinal():
-                        dist.all_reduce(param.grad / dist.get_world_size()) 
-                        xm.all_reduce(param.grad)
-                    else:
-                        zeros = torch.zeros_like(param.grad)
-                        xm.all_reduce(zeros)    
+        print("reducing...")
+        xm.reduce_gradients(self.optimizer)
+        print("reduced")
+        if self.is_multi_host:
+            if xm.is_master_ordinal():
+                dist.all_reduce(param.grad.cpu() / dist.get_world_size()) 
+                xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
+            else:
+                zeros = torch.zeros_like(param.grad)
+                xm.all_reduce(xm.REDUCE_SUM, zeros)    
 
     def run(self):
+        import time
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+            start = time.time()
             samples = self.get_samples(self.train_dataset)
+            print(f"geT_samples took: {time.time()-start}")
             self.optimizer.zero_grad()
-
+            start = time.time()
             x_hat = self.model(**samples)
+            print(f"running took: {time.time()-start}")
 
             x_hat.loss.backward()
-
+            start = time.time()
             self.reduce_gradients()
-
+            print(f"reducing took: {time.time()-start}")
+            start = time.time()
             self.optimizer.step()
+            print(f"step took: {time.time() - start}")
             self.next_step()
+            start = time.time()
             if self.get("use_wandb"):
                 self.wandb_log(**{"train_loss": x_hat.loss.detach()})
-
+            print(f"logging took: {time.time() - start}")
             # log gradients once per epoch
-            if self.get("use_wandb"):
-                self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
-
+            #if self.get("use_wandb"):
+            #    self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
+            # start = time.time()
             # Checkpoint
-            if self.step % self.get("checkpoint_every") == 0:
-                torch.save(
-                    self.model.state_dict(),
-                    open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
-                )
+            # TODO: I benchmarked this and it is extremely slow -- speed it up 
+            #if self.step % self.get("checkpoint_every") == 0:
+            #    torch.save(
+            #        self.model.state_dict(),
+            #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
+            #    )
+            #    print(f"checkpoint took: {time.time()-start}")
+
 
             # Run Validation
             if self.step % self.get("eval_every") == 0:
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
+                    start = time.time()
                     samples = self.get_samples(self.eval_dataset)
                     x_hat, input, mu, log_var = self.model(**samples)
+                    
                     if self.get("use_wandb"):
                         self.wandb_log(**{"valid_loss": x_hat.loss.detach()})
-
+                    print(f"evaluation took: {time.time() - start}")
                 self.model.train()
 
     @property
@@ -261,9 +265,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         samples["decoder_input_ids"] = shift_tokens_right(samples['targets'],
                                                           self.model.config.pad_token_id,
                                                           self.model.config.decoder_start_token_id)
-        samples = {"input_ids": torch.tensor(samples["inputs"], dtype=torch.long).view(shape),
-         "labels": torch.tensor(samples["targets"], dtype=torch.long).view(shape),
-         "decoder_input_ids": torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(shape)}
+        samples = {"input_ids": torch.tensor(samples["inputs"], dtype=torch.long, device=xm.xla_device()).view(shape),
+         "labels": torch.tensor(samples["targets"], dtype=torch.long, device=xm.xla_device()).view(shape),
+         "decoder_input_ids": torch.tensor(samples["decoder_input_ids"], dtype=torch.long, device=xm.xla_device()).view(shape)}
         return samples
 
 
