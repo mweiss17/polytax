@@ -12,8 +12,8 @@ tokenizer:
 # Dataset and Batch Size
 dataset_name: "realnewslike.en"
 max_seq_length: 512
-per_device_train_batch_size: 16 
-per_device_eval_batch_size: 16
+per_device_train_batch_size: 32 
+per_device_eval_batch_size: 32 
 
 # Optimization
 adafactor: "True"
@@ -25,9 +25,9 @@ adam_beta1: 0.9
 adam_beta2: 0.999
 
 # Steps
-log_every: 300
-checkpoint_every: 20000
-eval_every: 10000
+log_every: 100
+checkpoint_every: 10000
+eval_every: 100
 num_train_steps: 1000000
 num_eval_steps: 10
 
