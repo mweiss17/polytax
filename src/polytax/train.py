@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
 import os
+import time
 import itertools
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
@@ -66,6 +67,18 @@ def setup_logging():
     logger = logging.getLogger(__name__)
     return logger
 
+
+class CustomDataset(torch.utils.data.Dataset):
+    def __init__(self):
+      pass
+
+    def __len__(self):
+        return 10000
+
+    def __getitem__(self, idx):
+      samples = {"input_ids": torch.zeros((1, 16), dtype=torch.long), "labels": torch.zeros((1, 16), dtype=torch.long), "decoder_input_ids": torch.zeros((1, 16), dtype=torch.long)}
+      return samples
+
 class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def __init__(self):
         super(Experiment1, self).__init__()
@@ -81,7 +94,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.total_shards = int(os.environ.get("WORLD_SIZE", 1)) * xm.xrt_world_size()
         print(f"ordinal {xm.get_ordinal()}")
         print(f"total shards: {self.total_shards}")
-        self.dist_index = int(os.environ.get("RANK", 1)) * int(xm.xrt_world_size()) + int(xm.get_ordinal())
+        self.dist_index = int(os.environ.get("RANK", 0)) * int(xm.xrt_world_size()) + int(xm.get_ordinal())
         print(f"self.dist_index: {self.dist_index}")
         self.is_multi_host = True if int(os.environ.get("WORLD_SIZE", 1)) > 1 else False
         print(f"is_multi_host: {self.is_multi_host}")
@@ -141,6 +154,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
+        
+        #from torch.utils.data import DataLoader
+        #train_dataset = CustomDataset()
+
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -195,17 +212,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 xm.all_reduce(xm.REDUCE_SUM, zeros)    
 
     def run(self):
-        import time
-        import torch_xla.debug.metrics as met
-
-        print(met.metrics_report())
-
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             start = time.time()
             #samples = self.get_samples(self.train_dataset)
             samples = next(self.train_loader)
-            print(f"geT_samples took: {time.time()-start}")
-            print(samples)
+            import pdb; pdb.set_trace()
+            #print(f"geT_samples took: {time.time()-start}")
+            #print(samples)
             #self.optimizer.zero_grad()
             start = time.time()
             x_hat = self.model(**samples)
@@ -214,9 +227,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             x_hat.loss.backward()
             start = time.time()
             #self.reduce_gradients()
-            print(x_hat)
-            print(self.optimizer)
-            print(self.model)
+            #print(x_hat)
+            #print(self.optimizer)
+            #print(self.model)
             print(f"reducing took: {time.time()-start}")
             start = time.time()
             xm.optimizer_step(self.optimizer)#.step()
@@ -238,7 +251,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
             #    )
             #    print(f"checkpoint took: {time.time()-start}")
-            #print(met.metrics_report())
+            # print(met.metrics_report())
 
 
             # Run Validation
@@ -290,6 +303,6 @@ def _mp_fn(index, args):
 
 if __name__ == '__main__':
     if True:
-        xmp.spawn(_mp_fn, args=({},), nprocs=8)
+        xmp.spawn(_mp_fn, args=({},), nprocs=1)
     else:
         Experiment1().run()

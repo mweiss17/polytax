@@ -74,7 +74,6 @@ def shift_tokens_right(input_ids, pad_token_id):
     return input_ids
     return prev_output_tokens
 
-
 def test(dataset):
     def process_sample(ex):
         result = {}
