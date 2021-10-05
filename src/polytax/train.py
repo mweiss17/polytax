@@ -160,7 +160,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if xla_found:
             train_loader = iter(pl.MpDeviceLoader(train_dataset, self.device))
         else:
-            train_loader = iter(torch.utils.data.DataLoader(train_dataset, num_workers=0))
+            train_loader = iter(torch.utils.data.DataLoader(train_dataset, num_workers=0, batch_size=None))
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -178,7 +178,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if xla_found:
             eval_loader = iter(pl.MpDeviceLoader(eval_dataset, self.device))
         else:
-            eval_loader = iter(torch.utils.data.DataLoader(eval_dataset, num_workers=0))
+            eval_loader = iter(torch.utils.data.DataLoader(eval_dataset, num_workers=0, batch_size=None))
 
         return train_loader, eval_loader
 
@@ -251,7 +251,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             if self.step % self.get("eval_every", 100) == 0:
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
-                    start = time.time()
                     samples = next(self.eval_loader)
                     x_hat = self.model(**samples)
                     
