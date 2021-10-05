@@ -75,14 +75,15 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if self.get("wandb/use"):
             self.initialize_wandb()
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = xm.xla_device()
 
-        self.total_shards = int(os.environ.get("WORLD_SIZE")) * xm.xrt_world_size()
+        self.total_shards = int(os.environ.get("WORLD_SIZE", 1)) * xm.xrt_world_size()
         print(f"ordinal {xm.get_ordinal()}")
         print(f"total shards: {self.total_shards}")
-        self.dist_index = int(os.environ.get("RANK")) * int(xm.xrt_world_size()) + int(xm.get_ordinal())
+        self.dist_index = int(os.environ.get("RANK", 1)) * int(xm.xrt_world_size()) + int(xm.get_ordinal())
         print(f"self.dist_index: {self.dist_index}")
-        self.is_multi_host = True if int(os.environ.get("WORLD_SIZE", 0)) > 1 else False
+        self.is_multi_host = True if int(os.environ.get("WORLD_SIZE", 1)) > 1 else False
         print(f"is_multi_host: {self.is_multi_host}")
        
         # one process per host  
@@ -94,7 +95,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def _build(self):
         self.logger = setup_logging()
         print(f"{self._config}")
-        self.seed = self.get("seed")
+        self.seed = self.get("seed", 1)
         set_seed(self.seed) # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
@@ -105,11 +106,14 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
         # Build the data loaders
         self.train_dataset, self.eval_dataset = self._build_loaders()
-        self.model = T5ForConditionalGeneration(self.model_config)
-        self.model.to(xm.xla_device())
+        self.train_loader = iter(pl.MpDeviceLoader(self.train_dataset, self.device))
+        self.eval_loader = iter(pl.MpDeviceLoader(self.eval_dataset, self.device))
+        self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
 
         # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
         #  https://github.com/pytorch/fairseq/blob/main/fairseq/optim/lr_scheduler/inverse_square_root_schedule.py
+        #self.model = MpModelWrapper(self.model)
+
         self.optimizer = Adafactor(
             self.model.parameters(),
             # lr=self.get("learning_rate"),
@@ -127,13 +131,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def _build_loaders(self):
         # determine maximum sequence length to use
         max_seq_length = min(self.get("max_seq_length"), self.tokenizer.model_max_length)
-        sequence_length = {"inputs": max_seq_length, "targets": max_seq_length}
-
+        sequence_length = {"inputs": max_seq_length, "targets": max_seq_length, "decoder_input_ids": max_seq_length}
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
-        print(f"idx: {self.dist_index}")
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
-        train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
+        if self.total_shards > 1:
+            train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
         train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -145,7 +148,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print("no validation set")
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
                                                                       shuffle=True, seed=self.seed, num_epochs=1)
-        eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
+            if self.total_shards > 1:
+                eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -166,7 +170,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             model_config = CONFIG_MAPPING[self.model_type]()
         return model_config
 
-    def get_tokenizer(self, tokenizer_name=None, use_fast=None):
+    def get_tokenizer(self, tokenizer_name="./tokenizer/", use_fast=True):
         # Load pretrained model and tokenizer
         if tokenizer_name:
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=self.cache_dir, use_fast=use_fast)
@@ -180,7 +184,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def reduce_gradients(self):
         # AllReduce the model gradients so we can step the global gradient
         print("reducing...")
-        xm.reduce_gradients(self.optimizer)
+        #xm.reduce_gradients(self.optimizer)
         print("reduced")
         if self.is_multi_host:
             if xm.is_master_ordinal():
@@ -192,21 +196,30 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def run(self):
         import time
+        import torch_xla.debug.metrics as met
+
+        print(met.metrics_report())
+
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             start = time.time()
-            samples = self.get_samples(self.train_dataset)
+            #samples = self.get_samples(self.train_dataset)
+            samples = next(self.train_loader)
             print(f"geT_samples took: {time.time()-start}")
-            self.optimizer.zero_grad()
+            print(samples)
+            #self.optimizer.zero_grad()
             start = time.time()
             x_hat = self.model(**samples)
             print(f"running took: {time.time()-start}")
 
             x_hat.loss.backward()
             start = time.time()
-            self.reduce_gradients()
+            #self.reduce_gradients()
+            print(x_hat)
+            print(self.optimizer)
+            print(self.model)
             print(f"reducing took: {time.time()-start}")
             start = time.time()
-            self.optimizer.step()
+            xm.optimizer_step(self.optimizer)#.step()
             print(f"step took: {time.time() - start}")
             self.next_step()
             start = time.time()
@@ -225,6 +238,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
             #    )
             #    print(f"checkpoint took: {time.time()-start}")
+            #print(met.metrics_report())
 
 
             # Run Validation
