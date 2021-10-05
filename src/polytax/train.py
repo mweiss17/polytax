@@ -126,9 +126,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
         
         #self.model = MpModelWrapper(self.model)
+        # No need to specify Learning Rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optimizer = Adafactor(
             self.model.parameters(),
-            # lr=self.get("learning_rate"),
             eps=(1e-30, 1e-3),
             clip_threshold=1.0,
             decay_rate=-0.8,
@@ -155,8 +155,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_dataset = itertools.cycle(train_dataset)
         train_dataset = SeqioWrapperDataset(train_dataset)
 
-        print(">>>> train_dataset is given as", type(train_dataset))
-
         if xla_found:
             train_loader = iter(pl.MpDeviceLoader(train_dataset, self.device))
         else:
@@ -164,7 +162,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
-        print(">>>> eval_dataset is given as ", type(eval_dataset))
         except Exception:
             print("no validation set")
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
@@ -228,15 +225,19 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = next(self.train_loader)
+            time_epoch = time.time()
             self.optimizer.zero_grad()
             x_hat = self.model(**samples)
             x_hat.loss.backward()
-            self.reduce_gradients()
+            self.reduce_gradients()     
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
             if self.is_master_ordinal and self.get("use_wandb"):
                 self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})
-                #self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
+                self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
+                self.wandb_log(**{"it/s": time.time()-time_epoch})
+
+            #print(">>> Optimizer printed as", self.optimizer)
             # Checkpoint
             # TODO: I benchmarked this and it is extremely slow -- speed it up 
             #if self.step % self.get("checkpoint_every") == 0:
