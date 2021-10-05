@@ -43,6 +43,7 @@ from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
+from torch.utils.data import DataLoader
 
 global xla_found
 try:
@@ -67,17 +68,18 @@ def setup_logging():
     logger = logging.getLogger(__name__)
     return logger
 
+class SeqioWrapperDataset(torch.utils.data.IterableDataset):
+    # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset
+    def __init__(self, seqiotask):
+        self.seqiotask = seqiotask
 
-class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self):
-      pass
-
-    def __len__(self):
-        return 10000
-
-    def __getitem__(self, idx):
-      samples = {"input_ids": torch.zeros((1, 16), dtype=torch.long), "labels": torch.zeros((1, 16), dtype=torch.long), "decoder_input_ids": torch.zeros((1, 16), dtype=torch.long)}
-      return samples
+    def __iter__(self):
+        def process_sample(sample):
+            sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long).squeeze(0),
+                       "labels": torch.tensor(sample["targets"], dtype=torch.long).squeeze(0),
+                       "decoder_input_ids": torch.tensor(sample["inputs"], dtype=torch.long).squeeze(0)}
+            return sample
+        return map(process_sample, self.seqiotask)
 
 class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def __init__(self):
@@ -88,19 +90,23 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if self.get("wandb/use"):
             self.initialize_wandb()
 
-        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.device = xm.xla_device()
+        self.device = xm.xla_device() if xla_found else torch.device("cpu")
 
-        self.total_shards = int(os.environ.get("WORLD_SIZE", 1)) * xm.xrt_world_size()
-        print(f"ordinal {xm.get_ordinal()}")
-        print(f"total shards: {self.total_shards}")
-        self.dist_index = int(os.environ.get("RANK", 0)) * int(xm.xrt_world_size()) + int(xm.get_ordinal())
-        print(f"self.dist_index: {self.dist_index}")
-        self.is_multi_host = True if int(os.environ.get("WORLD_SIZE", 1)) > 1 else False
-        print(f"is_multi_host: {self.is_multi_host}")
+        self.local_world_size = int(xm.xrt_world_size()) if xla_found else 1 # Devices per host
+        self.global_world_size = int(os.environ.get("WORLD_SIZE", 1)) # Total number of hosts
+        self.local_rank = int(xm.get_ordinal()) if xla_found else 1
+        self.global_rank = int(os.environ.get("RANK", 0)) * self.local_world_size + self.local_rank
+
+        self.total_shards = self.global_world_size * self.local_world_size
+        self.is_multi_host = self.global_world_size > 1
+        self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
+        # print(f"ordinal {xm.get_ordinal()}")
+        # print(f"total shards: {self.total_shards}")
+        # print(f"self.dist_index: {self.dist_index}")
+        # print(f"is_multi_host: {self.is_multi_host}")
        
         # one process per host  
-        if self.is_multi_host and xm.is_master_ordinal():
+        if self.is_multi_host and self.is_master_ordinal:
             dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
 
         self._build()
@@ -118,9 +124,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * self.total_shards
 
         # Build the data loaders
-        self.train_dataset, self.eval_dataset = self._build_loaders()
-        self.train_loader = iter(pl.MpDeviceLoader(self.train_dataset, self.device))
-        self.eval_loader = iter(pl.MpDeviceLoader(self.eval_dataset, self.device))
+        self.train_loader, self.eval_loader = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
 
         # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
@@ -154,10 +158,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
-        
-        #from torch.utils.data import DataLoader
-        #train_dataset = CustomDataset()
-
+        train_dataset = SeqioWrapperDataset(train_dataset)
+        if xla_found:
+            train_loader = iter(pl.MpDeviceLoader(train_dataset, self.device))
+        else:
+            train_loader = iter(torch.utils.data.DataLoader(train_dataset, num_workers=0))
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -171,7 +176,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         eval_dataset = itertools.cycle(eval_dataset)
-        return train_dataset, eval_dataset
+        eval_dataset = SeqioWrapperDataset(eval_dataset)
+        if xla_found:
+            eval_loader = iter(pl.MpDeviceLoader(eval_dataset, self.device))
+        else:
+            eval_loader = iter(torch.utils.data.DataLoader(eval_dataset, num_workers=0))
+
+        return train_loader, eval_loader
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
@@ -200,23 +211,28 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def reduce_gradients(self):
         # AllReduce the model gradients so we can step the global gradient
+        if not xla_found:
+            return
+
         print("reducing...")
-        #xm.reduce_gradients(self.optimizer)
+        xm.reduce_gradients(self.optimizer)
         print("reduced")
-        if self.is_multi_host:
-            if xm.is_master_ordinal():
-                dist.all_reduce(param.grad.cpu() / dist.get_world_size()) 
-                xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
-            else:
-                zeros = torch.zeros_like(param.grad)
-                xm.all_reduce(xm.REDUCE_SUM, zeros)    
+
+        if not self.is_multi_host:
+            return
+
+        if self.is_master_ordinal:
+            dist.all_reduce(param.grad.cpu() / dist.get_world_size())
+            xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
+        else:
+            zeros = torch.zeros_like(param.grad)
+            xm.all_reduce(xm.REDUCE_SUM, zeros)
 
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             start = time.time()
             #samples = self.get_samples(self.train_dataset)
             samples = next(self.train_loader)
-            import pdb; pdb.set_trace()
             #print(f"geT_samples took: {time.time()-start}")
             #print(samples)
             #self.optimizer.zero_grad()
@@ -226,13 +242,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
             x_hat.loss.backward()
             start = time.time()
-            #self.reduce_gradients()
+            self.reduce_gradients()
             #print(x_hat)
             #print(self.optimizer)
             #print(self.model)
             print(f"reducing took: {time.time()-start}")
             start = time.time()
-            xm.optimizer_step(self.optimizer)#.step()
+            xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             print(f"step took: {time.time() - start}")
             self.next_step()
             start = time.time()
@@ -259,7 +275,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
                     start = time.time()
-                    samples = self.get_samples(self.eval_dataset)
+                    # samples = self.get_samples(self.eval_dataset)
+                    samples = next(self.eval_loader)
                     x_hat, input, mu, log_var = self.model(**samples)
                     
                     if self.get("use_wandb"):
@@ -302,7 +319,7 @@ def _mp_fn(index, args):
     Experiment1().run()
 
 if __name__ == '__main__':
-    if True:
-        xmp.spawn(_mp_fn, args=({},), nprocs=1)
+    if xla_found:
+        xmp.spawn(_mp_fn, args=({},), nprocs=8)
     else:
         Experiment1().run()

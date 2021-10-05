@@ -107,9 +107,9 @@ seqio.TaskRegistry.add(
         seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
-        test,
+        # test,
     ],
-    output_features=CUSTOM_OUTPUT_FEATURES,
+    output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[perplexity])
 
 seqio.TaskRegistry.add(
