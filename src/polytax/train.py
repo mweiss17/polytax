@@ -234,7 +234,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
             if self.is_master_ordinal and self.get("use_wandb"):
-                self.wandb_log(**{"train_loss": x_hat.loss.detach()})
+                self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})
                 #self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
             # Checkpoint
             # TODO: I benchmarked this and it is extremely slow -- speed it up 
@@ -253,10 +253,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
                     start = time.time()
                     samples = next(self.eval_loader)
-                    x_hat, input, mu, log_var = self.model(**samples)
+                    x_hat = self.model(**samples)
                     
                     if self.is_master_ordinal and self.get("use_wandb"):
-                        self.wandb_log(**{"valid_loss": x_hat.loss.detach()})
+                        self.wandb_log(**{"valid_loss": x_hat.loss.cpu().detach()})
                 self.model.train()
 
     @property
