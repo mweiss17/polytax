@@ -124,11 +124,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # Build the data loaders
         self.train_loader, self.eval_loader = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
-
-        # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
-        #  https://github.com/pytorch/fairseq/blob/main/fairseq/optim/lr_scheduler/inverse_square_root_schedule.py
+        
         #self.model = MpModelWrapper(self.model)
-
         self.optimizer = Adafactor(
             self.model.parameters(),
             # lr=self.get("learning_rate"),
@@ -157,6 +154,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
         train_dataset = SeqioWrapperDataset(train_dataset)
+
+        print(">>>> train_dataset is given as", type(train_dataset))
+
         if xla_found:
             train_loader = iter(pl.MpDeviceLoader(train_dataset, self.device))
         else:
@@ -164,6 +164,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
+        print(">>>> eval_dataset is given as ", type(eval_dataset))
         except Exception:
             print("no validation set")
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
@@ -248,7 +249,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
             # Run Validation
-            if self.step % self.get("eval_every", 100) == 0:
+            if self.step % self.get("eval_every", 5) == 0:
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
                     samples = next(self.eval_loader)
