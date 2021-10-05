@@ -75,9 +75,9 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         def process_sample(sample):
-            sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long).squeeze(0),
-                       "labels": torch.tensor(sample["targets"], dtype=torch.long).squeeze(0),
-                       "decoder_input_ids": torch.tensor(sample["inputs"], dtype=torch.long).squeeze(0)}
+            sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long),
+                       "labels": torch.tensor(sample["targets"], dtype=torch.long),
+                       "decoder_input_ids": torch.tensor(sample["inputs"], dtype=torch.long)}
             return sample
         return map(process_sample, self.seqiotask)
 
@@ -85,10 +85,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def __init__(self):
         super(Experiment1, self).__init__()
         self.auto_setup()
-        WandBMixin.WANDB_PROJECT = "polytax"
-        WandBMixin.WANDB_ENTITY = "mweiss10"
-        if self.get("wandb/use"):
-            self.initialize_wandb()
 
         self.device = xm.xla_device() if xla_found else torch.device("cpu")
 
@@ -100,14 +96,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.total_shards = self.global_world_size * self.local_world_size
         self.is_multi_host = self.global_world_size > 1
         self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
-        # print(f"ordinal {xm.get_ordinal()}")
-        # print(f"total shards: {self.total_shards}")
-        # print(f"self.dist_index: {self.dist_index}")
-        # print(f"is_multi_host: {self.is_multi_host}")
+        print(f"total shards: {self.total_shards}")
        
         # one process per host  
         if self.is_multi_host and self.is_master_ordinal:
             dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
+
+        WandBMixin.WANDB_PROJECT = "polytax"
+        WandBMixin.WANDB_ENTITY = "mweiss10"
+        if self.is_master_ordinal and self.get("use_wandb"):
+            self.initialize_wandb()
 
         self._build()
 
@@ -120,9 +118,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
-        self.train_batch_size = int(self.get("per_device_train_batch_size")) * self.total_shards
-        self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * self.total_shards
-
+        self.train_batch_size = int(self.get("per_device_train_batch_size"))
+        self.eval_batch_size = int(self.get("per_device_eval_batch_size")) 
+        
         # Build the data loaders
         self.train_loader, self.eval_loader = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
@@ -153,7 +151,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
         if self.total_shards > 1:
-            train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
+            train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
         train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -171,7 +169,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
                                                                       shuffle=True, seed=self.seed, num_epochs=1)
             if self.total_shards > 1:
-                eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.dist_index)
+                eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -214,9 +212,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if not xla_found:
             return
 
-        print("reducing...")
         xm.reduce_gradients(self.optimizer)
-        print("reduced")
 
         if not self.is_multi_host:
             return
@@ -230,35 +226,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def run(self):
         for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
-            start = time.time()
-            #samples = self.get_samples(self.train_dataset)
             samples = next(self.train_loader)
-            #print(f"geT_samples took: {time.time()-start}")
-            #print(samples)
-            #self.optimizer.zero_grad()
-            start = time.time()
+            self.optimizer.zero_grad()
             x_hat = self.model(**samples)
-            print(f"running took: {time.time()-start}")
-
             x_hat.loss.backward()
-            start = time.time()
             self.reduce_gradients()
-            #print(x_hat)
-            #print(self.optimizer)
-            #print(self.model)
-            print(f"reducing took: {time.time()-start}")
-            start = time.time()
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
-            print(f"step took: {time.time() - start}")
             self.next_step()
-            start = time.time()
-            if self.get("use_wandb"):
+            if self.is_master_ordinal and self.get("use_wandb"):
                 self.wandb_log(**{"train_loss": x_hat.loss.detach()})
-            print(f"logging took: {time.time() - start}")
-            # log gradients once per epoch
-            #if self.get("use_wandb"):
-            #    self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
-            # start = time.time()
+                #self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
             # Checkpoint
             # TODO: I benchmarked this and it is extremely slow -- speed it up 
             #if self.step % self.get("checkpoint_every") == 0:
@@ -271,17 +248,15 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
             # Run Validation
-            if self.step % self.get("eval_every") == 0:
+            if self.step % self.get("eval_every", 100) == 0:
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
                     start = time.time()
-                    # samples = self.get_samples(self.eval_dataset)
                     samples = next(self.eval_loader)
                     x_hat, input, mu, log_var = self.model(**samples)
                     
-                    if self.get("use_wandb"):
+                    if self.is_master_ordinal and self.get("use_wandb"):
                         self.wandb_log(**{"valid_loss": x_hat.loss.detach()})
-                    print(f"evaluation took: {time.time() - start}")
                 self.model.train()
 
     @property
@@ -302,17 +277,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     #             push_to_hub=False,
     #             commit_message=f"Saving weights and logs of step {self.step}"
     #         )
-
-    def get_samples(self, iterable_dataset):
-        samples = next(iterable_dataset)
-        shape = (-1, self.get("max_seq_length"))
-        samples["decoder_input_ids"] = shift_tokens_right(samples['targets'],
-                                                          self.model.config.pad_token_id,
-                                                          self.model.config.decoder_start_token_id)
-        samples = {"input_ids": torch.tensor(samples["inputs"], dtype=torch.long, device=xm.xla_device()).view(shape),
-         "labels": torch.tensor(samples["targets"], dtype=torch.long, device=xm.xla_device()).view(shape),
-         "decoder_input_ids": torch.tensor(samples["decoder_input_ids"], dtype=torch.long, device=xm.xla_device()).view(shape)}
-        return samples
 
 
 def _mp_fn(index, args):

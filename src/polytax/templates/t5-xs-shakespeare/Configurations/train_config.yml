@@ -15,7 +15,7 @@ tokenizer:
 # Dataset and Batch Size
 dataset_name: "tiny_shakespeare"
 max_seq_length: 16
-per_device_train_batch_size: 1
+per_device_train_batch_size: 2
 per_device_eval_batch_size: 1
 
 # Optimization
@@ -35,10 +35,7 @@ num_train_steps: 20
 num_eval_steps: 3
 
 # Logging
-wandb:
-  use: False
-  log_every: 100
-
+use_wandb: True
 # Model Config
 model_config:
   d_ff: 32

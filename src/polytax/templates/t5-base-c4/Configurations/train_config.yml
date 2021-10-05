@@ -25,16 +25,14 @@ adam_beta1: 0.9
 adam_beta2: 0.999
 
 # Steps
-logging_steps: 300
-save_steps: 20000
-eval_steps: 10000
+log_every: 300
+checkpoint_every: 20000
+eval_every: 10000
 num_train_steps: 1000000
 num_eval_steps: 10
 
 # Logging
-wandb:
-  use: True
-  log_every: 100
+use_wandb: True
 
 # Model Config
 model_config:

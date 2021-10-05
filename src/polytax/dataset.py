@@ -59,45 +59,6 @@ seqio.TaskRegistry.add(
     output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[perplexity])
 
-def shift_tokens_right(input_ids, pad_token_id):
-    """Shift input ids one token to the right, and wrap the last non pad token (usually <eos>)."""
-    prev_output_tokens = tf.identity(input_ids)
-    index_of_eos = tf.expand_dims(tf.math.reduce_sum(tf.cast(tf.math.not_equal(input_ids, pad_token_id), tf.int32), axis=0), axis=-1)
-    prev_output_tokens_0 = tf.expand_dims(tf.squeeze(tf.gather(input_ids, 1, index_of_eos)), axis=-1)
-    prev_output_tokens_1 = input_ids[:-1]
-    prev_output_tokens = tf.squeeze(tf.stack([prev_output_tokens_0, prev_output_tokens_1]), axis=1)
-    # Torch function I translated to TF. TODO: double check it (search shift_tokens_right https://huggingface.co/transformers/_modules/transformers/modeling_bart.html)
-    #prev_output_tokens = input_ids.clone()
-    #index_of_eos = (input_ids.ne(pad_token_id).sum(dim=1) - 1).unsqueeze(-1)
-    #prev_output_tokens[:, 0] = input_ids.gather(1, index_of_eos).squeeze()
-    #prev_output_tokens[:, 1:] = input_ids[:, :-1]
-    return input_ids
-    return prev_output_tokens
-
-def test(dataset):
-    def process_sample(ex):
-        result = {}
-        for k, v in ex.items():
-            if k == "inputs":
-                result["inputs"] = v
-            elif k == "targets":
-                result["targets"] = v
-        
-        result["decoder_input_ids"] = shift_tokens_right(ex["targets"], 0) # 0's are the decoder and padding TODO fix
-        return result
-    #return {"input_ids": torch.tensor(samples["inputs"], dtype=torch.long, device=xm.xla_device()).view(shape),
-    #         "labels": torch.tensor(samples["targets"], dtype=torch.long, device=xm.xla_device()).view(shape),
-    #          "decoder_input_ids": torch.tensor(samples["decoder_input_ids"], dtype=torch.long, device=xm.xla_device()).view(shape)}
-    return dataset.map(lambda ex: process_sample(ex), num_parallel_calls=tf.data.experimental.AUTOTUNE)
-CUSTOM_OUTPUT_FEATURES = {
-            "inputs": seqio.Feature(
-                        vocabulary=get_default_vocabulary(), add_eos=True,
-                                required=False),
-                "targets": seqio.Feature(
-                            vocabulary=get_default_vocabulary(), add_eos=True),
-                "decoder_input_ids": seqio.Feature(vocabulary=get_default_vocabulary(), add_eos=True)
-                }
-
 seqio.TaskRegistry.add(
     "tiny_shakespeare",
     seqio.TfdsDataSource(tfds_name="tiny_shakespeare:1.0.0"),
@@ -107,7 +68,6 @@ seqio.TaskRegistry.add(
         seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
-        # test,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[perplexity])
