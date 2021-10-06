@@ -222,19 +222,18 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             zeros = torch.zeros_like(param.grad)
             xm.all_reduce(xm.REDUCE_SUM, zeros)
 
-    def _train_update(self, device, x, loss, tracker, writer):
+    def _train_update(self, device, step, loss, tracker):
         test_utils.print_training_update(
             device,
-            x,
+            step, 
             loss.item(),
             tracker.rate(),
-            tracker.global_rate(),
-            summary_writer=writer)
+            tracker.global_rate())
 
     def run(self):
         if xla_found:
             tracker = xm.RateTracker()
-        for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+        for trainstep in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = next(self.train_loader)
             self.optimizer.zero_grad()
             x_hat = self.model(**samples)
@@ -246,8 +245,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 tracker.add(self.get("per_device_train_batch_size") * self.global_world_size)
                 xm.add_step_closure(
                     self._train_update,
-                    args=(self.device, x_hat.loss, tracker.rate()),
-                    run_async=True)
+                    args=(self.device, trainstep, x_hat.loss, tracker))
 
                 if self.is_master_ordinal and self.get("use_wandb"):
                     self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})

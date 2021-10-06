@@ -43,7 +43,7 @@ model_config:
   dropout_rate: 0.1
   eos_token_id: 1
   feed_forward_proj: "relu"
-  gradient_checkpointing: "False"
+  gradient_checkpointing: False
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-06
