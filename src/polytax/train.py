@@ -153,12 +153,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
-        train_dataset = SeqioWrapperDataset(train_dataset)
-
+        train_loader = iter(SeqioWrapperDataset(train_dataset))
+        # train_loader = iter(torch.utils.data.DataLoader(iter(train_dataset), num_workers=0, batch_size=None))
         if xla_found:
-            train_loader = iter(pl.MpDeviceLoader(train_dataset, self.device))
-        else:
-            train_loader = iter(torch.utils.data.DataLoader(train_dataset, num_workers=0, batch_size=None))
+            train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -172,11 +170,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         eval_dataset = itertools.cycle(eval_dataset)
-        eval_dataset = SeqioWrapperDataset(eval_dataset)
+        eval_loader = iter(SeqioWrapperDataset(eval_dataset))
+        # eval_loader = iter(torch.utils.data.DataLoader(iter(eval_dataset), num_workers=0, batch_size=None))
         if xla_found:
-            eval_loader = iter(pl.MpDeviceLoader(eval_dataset, self.device))
-        else:
-            eval_loader = iter(torch.utils.data.DataLoader(eval_dataset, num_workers=0, batch_size=None))
+            eval_loader = iter(pl.MpDeviceLoader(eval_loader, self.device))
 
         return train_loader, eval_loader
 
@@ -222,8 +219,18 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             zeros = torch.zeros_like(param.grad)
             xm.all_reduce(xm.REDUCE_SUM, zeros)
 
+    def _train_update(self, device, step, loss, tracker):
+        test_utils.print_training_update(
+            device,
+            step, 
+            loss.item(),
+            tracker.rate(),
+            tracker.global_rate())
+
     def run(self):
-        for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+        if xla_found:
+            tracker = xm.RateTracker()
+        for trainstep in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
             samples = next(self.train_loader)
             time_epoch = time.time()
             self.optimizer.zero_grad()
@@ -232,12 +239,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.reduce_gradients()     
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
-            if self.is_master_ordinal and self.get("use_wandb"):
-                self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})
-                self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
-                self.wandb_log(**{"it/s": time.time()-time_epoch})
+            if xla_found:
+                tracker.add(self.get("per_device_train_batch_size") * self.global_world_size)
+                xm.add_step_closure(
+                    self._train_update,
+                    args=(self.device, trainstep, x_hat.loss, tracker))
 
-            #print(">>> Optimizer printed as", self.optimizer)
+                if self.is_master_ordinal and self.get("use_wandb"):
+                    self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})
+                    self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
+                    self.wandb_log(**{"it/s": time.time()-time_epoch})
             # Checkpoint
             # TODO: I benchmarked this and it is extremely slow -- speed it up 
             #if self.step % self.get("checkpoint_every") == 0:
@@ -255,9 +266,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
                     samples = next(self.eval_loader)
                     x_hat = self.model(**samples)
-                    
-                    if self.is_master_ordinal and self.get("use_wandb"):
-                        self.wandb_log(**{"valid_loss": x_hat.loss.cpu().detach()})
+
+                    # if self.is_master_ordinal and self.get("use_wandb"):
+                    #     self.wandb_log(**{"valid_loss": x_hat.loss.cpu().detach()})
                 self.model.train()
 
     @property
