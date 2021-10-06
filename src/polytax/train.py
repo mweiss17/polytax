@@ -75,11 +75,11 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         def process_sample(sample):
-            sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long),
-                       "labels": torch.tensor(sample["targets"], dtype=torch.long),
-                       "decoder_input_ids": torch.tensor(sample["inputs"], dtype=torch.long)}
+            sample = {"input_ids": sample["inputs"],#torch.tensor(sample["inputs"], dtype=torch.long),
+                       "labels": sample["targets"],#torch.tensor(sample["targets"], dtype=torch.long),
+                       "decoder_input_ids": sample["inputs"]}#torch.tensor(sample["inputs"], dtype=torch.long)}
             return sample
-        return map(process_sample, self.seqiotask)
+        return iter(map(process_sample, self.seqiotask))
 
 class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def __init__(self):
@@ -157,10 +157,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
         train_dataset = SeqioWrapperDataset(train_dataset)
+        train_loader = iter(torch.utils.data.DataLoader(train_dataset, num_workers=10, batch_size=None))
         if xla_found:
-            train_loader = iter(pl.MpDeviceLoader(train_dataset, self.device))
-        else:
-            train_loader = iter(torch.utils.data.DataLoader(train_dataset, num_workers=0, batch_size=None))
+            train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -175,10 +174,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         eval_dataset = itertools.cycle(eval_dataset)
         eval_dataset = SeqioWrapperDataset(eval_dataset)
+        eval_loader = iter(torch.utils.data.DataLoader(eval_dataset, num_workers=10, batch_size=None))
         if xla_found:
-            eval_loader = iter(pl.MpDeviceLoader(eval_dataset, self.device))
-        else:
-            eval_loader = iter(torch.utils.data.DataLoader(eval_dataset, num_workers=0, batch_size=None))
+            eval_loader = iter(pl.MpDeviceLoader(eval_loader, self.device))
 
         return train_loader, eval_loader
 
