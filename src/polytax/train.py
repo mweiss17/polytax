@@ -22,7 +22,8 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
 import os
-import time
+import wandb
+import numpy as np
 import itertools
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
@@ -106,6 +107,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         WandBMixin.WANDB_ENTITY = "mweiss10"
         if self.is_master_ordinal and self.get("use_wandb"):
             self.initialize_wandb()
+            columns = ["Step", "Ground Truth Text", "Predicted Text"]
+            self.table = wandb.Table(columns=columns)
 
         self._build()
 
@@ -116,7 +119,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         set_seed(self.seed) # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
-        self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
+        self.tokenizer = dataset.get_default_vocabulary()
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         self.train_batch_size = int(self.get("per_device_train_batch_size"))
         self.eval_batch_size = int(self.get("per_device_eval_batch_size")) 
@@ -142,8 +145,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _build_loaders(self):
         # determine maximum sequence length to use
-        max_seq_length = min(self.get("max_seq_length"), self.tokenizer.model_max_length)
-        sequence_length = {"inputs": max_seq_length, "targets": max_seq_length, "decoder_input_ids": max_seq_length}
+        sequence_length = {"inputs": self.get("max_seq_length"), "targets": self.get("max_seq_length"), "decoder_input_ids": self.get("max_seq_length")}
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
@@ -182,25 +184,14 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             model_config = T5Config.from_pretrained(model_name_or_path)
         elif type(model_config) == dict: # pass it in directly from yaml
             model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
-            model_config = T5Config.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=len(self.tokenizer))
+            model_config = T5Config.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=self.tokenizer.vocab_size)
         elif model_config:
             model_config = T5Config.from_pretrained(
-                model_config, cache_dir=self.cache_dir, vocab_size=len(self.tokenizer)
+                model_config, cache_dir=self.cache_dir, vocab_size=self.tokenizer.vocab_size
             )
         else:
             model_config = CONFIG_MAPPING[self.model_type]()
         return model_config
-
-    def get_tokenizer(self, tokenizer_name="./tokenizer/", use_fast=True):
-        # Load pretrained model and tokenizer
-        if tokenizer_name:
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=self.cache_dir, use_fast=use_fast)
-        else:
-            raise ValueError(
-                "You are instantiating a new tokenizer from scratch. This is not supported by this script."
-                "You can do it from another script, save it, and load it from here, using --tokenizer_name."
-            )
-        return tokenizer
 
     def reduce_gradients(self):
         # AllReduce the model gradients so we can step the global gradient
@@ -226,15 +217,52 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             loss.item(),
             tracker.rate(),
             tracker.global_rate())
+        if self.is_master_ordinal and self.get("use_wandb"):
+            # self.wandb_watch(self.model, loss.item()), log_freq=1)
+            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate(), "train_loss": loss.item()})
+
+    def decode(self, x, x_hat):
+        one_sample_logits = x_hat.logits[0, :]
+        gt = self.tokenizer.decode(x['input_ids'][0, :].cpu().numpy().tolist())
+        pred = self.tokenizer.decode(one_sample_logits.argmax(axis=1).cpu().numpy().tolist())
+        return gt, pred
+
+    def send_wandb_table(self, gt, pred):
+        self.table.add_data(self.step, gt, pred)
+        wandb.log({"examples": self.table})
+
+    def compute_accuracy(self, x, x_hat):
+        correct = 0
+        total_samples = 0
+        pred = x_hat.logits.argmax(2)
+        correct += pred.eq(x['input_ids'].view_as(pred)).sum()
+        total_samples += x['input_ids'].size()[1]
+
+        accuracy = 100.0 * correct.item() / total_samples
+        if xla_found:
+            accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
+        return accuracy
+
+    def _val_update(self, device, step, x_hat, x, tracker):
+        test_utils.print_training_update(
+            device,
+            step,
+            x_hat.loss.item(),
+            tracker.rate(),
+            tracker.global_rate())
+        gt, pred = self.decode(x, x_hat)
+        accuracy = self.compute_accuracy(x, x_hat)
+        if self.is_master_ordinal and self.get("use_wandb"):
+            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate(), "val_loss": x_hat.loss.item()})
+            self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy})
 
     def run(self):
         if xla_found:
             tracker = xm.RateTracker()
         for trainstep in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
-            samples = next(self.train_loader)
-            time_epoch = time.time()
+            x = next(self.train_loader)
             self.optimizer.zero_grad()
-            x_hat = self.model(**samples)
+            x_hat = self.model(**x)
             x_hat.loss.backward()
             self.reduce_gradients()     
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
@@ -244,32 +272,37 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 xm.add_step_closure(
                     self._train_update,
                     args=(self.device, trainstep, x_hat.loss, tracker))
-
-                if self.is_master_ordinal and self.get("use_wandb"):
-                    self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})
-                    self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
-                    self.wandb_log(**{"it/s": time.time()-time_epoch})
-            # Checkpoint
-            # TODO: I benchmarked this and it is extremely slow -- speed it up 
-            #if self.step % self.get("checkpoint_every") == 0:
-            #    torch.save(
-            #        self.model.state_dict(),
-            #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
-            #    )
-            #    print(f"checkpoint took: {time.time()-start}")
-            # print(met.metrics_report())
-
+            elif self.is_master_ordinal and self.get("use_wandb"):
+                gt, pred = self.decode(x, x_hat)
+                self.send_wandb_table(gt, pred)
+                self.wandb_log(**{"train_loss": x_hat.loss.item()})
 
             # Run Validation
             if self.step % self.get("eval_every", 5) == 0:
                 self.model.eval()
-                for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
-                    samples = next(self.eval_loader)
-                    x_hat = self.model(**samples)
+                for valstep in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
+                    x = next(self.eval_loader)
+                    x_hat = self.model(**x)
+                    if xla_found:
+                        xm.add_step_closure(
+                            self._val_update,
+                            args=(self.device, valstep, x_hat, x, tracker))
+                    elif self.is_master_ordinal and self.get("use_wandb"):
+                        gt, pred = self.decode(x, x_hat)
+                        accuracy = self.compute_accuracy(x, x_hat)
+                        self.wandb_log(**{"val_loss": x_hat.loss.item(), "ground_truth": gt, "predicted": pred, "val_accuracy": accuracy})
 
-                    # if self.is_master_ordinal and self.get("use_wandb"):
-                    #     self.wandb_log(**{"valid_loss": x_hat.loss.cpu().detach()})
                 self.model.train()
+
+                # Checkpoint
+                # TODO: I benchmarked this and it is extremely slow -- speed it up
+                # if self.step % self.get("checkpoint_every") == 0:
+                #    torch.save(
+                #        self.model.state_dict(),
+                #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
+                #    )
+                #    print(f"checkpoint took: {time.time()-start}")
+                # print(met.metrics_report())
 
     @property
     def evaluate_now(self):
