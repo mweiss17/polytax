@@ -54,5 +54,5 @@ model_config:
   pad_token_id: 0
   relative_attention_num_buckets: 32
   transformers_version: "4.10.0.dev0"
-  use_cache: true
+  use_cache: false
   vocab_size: 32003
