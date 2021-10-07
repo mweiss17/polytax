@@ -1,12 +1,15 @@
 import numpy as np
 import seqio
+import torch
 import functools
+import tensorflow as tf
 import tensorflow_datasets as tfds
 from t5.data import preprocessors
 from t5.data.glue_utils import get_glue_metric
 from t5.data.glue_utils import get_glue_postprocess_fn
 from t5.data.glue_utils import get_glue_text_preprocessor
 from t5.data.glue_utils import get_super_glue_metric
+from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 
 ## Setup vocab / tokenizer
 DEFAULT_SPM_PATH = "gs://t5-data/vocabs/cc_all.32000/sentencepiece.model"  # GCS
@@ -60,14 +63,13 @@ seqio.TaskRegistry.add(
     "tiny_shakespeare",
     seqio.TfdsDataSource(tfds_name="tiny_shakespeare:1.0.0"),
     preprocessors=[
-        functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
+        functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text", "decoder_input_ids": None}),
         seqio.preprocessors.tokenize,
         seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],
-    output_features={"inputs": seqio.Feature(vocabulary=get_default_vocabulary(), add_eos=True, required=False),
-                     "targets": seqio.Feature(vocabulary=get_default_vocabulary(), add_eos=True)},
+    output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[perplexity])
 
 seqio.TaskRegistry.add(

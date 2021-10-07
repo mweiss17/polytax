@@ -15,7 +15,7 @@ tokenizer:
 # Dataset and Batch Size
 dataset_name: "tiny_shakespeare"
 max_seq_length: 16
-per_device_train_batch_size: 1
+per_device_train_batch_size: 2
 per_device_eval_batch_size: 1
 
 # Optimization
@@ -31,14 +31,11 @@ adam_beta2: 0.999
 log_every: 1
 checkpoint_every: 1
 eval_every: 1
-num_train_steps: 3
+num_train_steps: 20
 num_eval_steps: 3
 
 # Logging
-wandb:
-  use: False
-  log_every: 100
-
+use_wandb: True
 # Model Config
 model_config:
   d_ff: 32
@@ -59,5 +56,5 @@ model_config:
   pad_token_id: 0
   relative_attention_num_buckets: 4
   transformers_version: "4.10.0.dev0"
-  use_cache: true
+  use_cache: false
   vocab_size: 32003

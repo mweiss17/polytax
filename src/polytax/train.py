@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
 import os
+import time
 import itertools
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
@@ -42,19 +43,20 @@ from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
+from torch.utils.data import DataLoader
 
 global xla_found
 try:
+    import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
     import torch_xla.test.test_utils as test_utils
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_env_vars as xenv
-
     xla_found = True
-except:
-    print("XLA not found\n")
+except Exception as e:
+    print(f"XLA not found {e} \n")
     xla_found = False
 
 def setup_logging():
@@ -66,51 +68,67 @@ def setup_logging():
     logger = logging.getLogger(__name__)
     return logger
 
+class SeqioWrapperDataset(torch.utils.data.IterableDataset):
+    # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset
+    def __init__(self, seqiotask):
+        self.seqiotask = seqiotask
+
+    def __iter__(self):
+        def process_sample(sample):
+            sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long),
+                       "labels": torch.tensor(sample["targets"], dtype=torch.long),
+                       "decoder_input_ids": torch.tensor(sample["inputs"], dtype=torch.long)}
+            return sample
+        return map(process_sample, self.seqiotask)
+
 class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def __init__(self):
         super(Experiment1, self).__init__()
         self.auto_setup()
+
+        self.device = xm.xla_device() if xla_found else torch.device("cpu")
+
+        self.local_world_size = int(xm.xrt_world_size()) if xla_found else 1 # Devices per host
+        self.global_world_size = int(os.environ.get("WORLD_SIZE", 1)) # Total number of hosts
+        self.local_rank = int(xm.get_ordinal()) if xla_found else 1
+        self.global_rank = int(os.environ.get("RANK", 0)) * self.local_world_size + self.local_rank
+
+        self.total_shards = self.global_world_size * self.local_world_size
+        self.is_multi_host = self.global_world_size > 1
+        self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
+        print(f"total shards: {self.total_shards}")
+       
+        # one process per host  
+        if self.is_multi_host and self.is_master_ordinal:
+            dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
+
         WandBMixin.WANDB_PROJECT = "polytax"
         WandBMixin.WANDB_ENTITY = "mweiss10"
-        if self.get("wandb/use"):
+        if self.is_master_ordinal and self.get("use_wandb"):
             self.initialize_wandb()
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Check for the LOCAL_RANK env var, which must be set for distributed computation
-        self.is_distributed = True if os.environ.get("LOCAL_RANK", None) else False
-
-        # hook up with the other processes
-        if self.is_distributed:
-            dist.init_process_group(backend=self.get("backend"))
 
         self._build()
 
     def _build(self):
         self.logger = setup_logging()
         print(f"{self._config}")
-        self.seed = self.get("seed")
+        self.seed = self.get("seed", 1)
         set_seed(self.seed) # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
-        if xla_found:
-            self.train_batch_size = int(self.get("per_device_train_batch_size")) * xm.xrt_world_size()
-            self.eval_batch_size = int(self.get("per_device_eval_batch_size")) * xm.xrt_world_size()
-        else:
-            self.train_batch_size = int(self.get("per_device_train_batch_size"))
-            self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
-
+        self.train_batch_size = int(self.get("per_device_train_batch_size"))
+        self.eval_batch_size = int(self.get("per_device_eval_batch_size")) 
+        
         # Build the data loaders
-        self.train_dataset, self.eval_dataset = self._build_loaders()
-        self.model = T5ForConditionalGeneration(self.model_config)
-
-        # TODO: we should replace this probably with the fairseq implementation. Read the T5 paper and search adafactor, and use the inverse square root
-        #  https://github.com/pytorch/fairseq/blob/main/fairseq/optim/lr_scheduler/inverse_square_root_schedule.py
+        self.train_loader, self.eval_loader = self._build_loaders()
+        self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
+        
+        #self.model = MpModelWrapper(self.model)
+        # No need to specify Learning Rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optimizer = Adafactor(
             self.model.parameters(),
-            # lr=self.get("learning_rate"),
             eps=(1e-30, 1e-3),
             clip_threshold=1.0,
             decay_rate=-0.8,
@@ -125,18 +143,20 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def _build_loaders(self):
         # determine maximum sequence length to use
         max_seq_length = min(self.get("max_seq_length"), self.tokenizer.model_max_length)
-        sequence_length = {"inputs": max_seq_length, "targets": max_seq_length}
-
+        sequence_length = {"inputs": max_seq_length, "targets": max_seq_length, "decoder_input_ids": max_seq_length}
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
-
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
-        if self.is_distributed:
-            train_dataset = train_dataset.shard(num_shards=dist.get_world_size(), index=dist.get_rank())
+        if self.total_shards > 1:
+            train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
         train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
+        train_loader = iter(SeqioWrapperDataset(train_dataset))
+        # train_loader = iter(torch.utils.data.DataLoader(iter(train_dataset), num_workers=0, batch_size=None))
+        if xla_found:
+            train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -144,13 +164,18 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print("no validation set")
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
                                                                       shuffle=True, seed=self.seed, num_epochs=1)
-        if self.is_distributed:
-            eval_dataset = eval_dataset.shard(num_shards=dist.get_world_size(), index=dist.get_rank())
+            if self.total_shards > 1:
+                eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
         eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
                                     ensure_eos=eos_keys, pack=True)
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         eval_dataset = itertools.cycle(eval_dataset)
-        return train_dataset, eval_dataset
+        eval_loader = iter(SeqioWrapperDataset(eval_dataset))
+        # eval_loader = iter(torch.utils.data.DataLoader(iter(eval_dataset), num_workers=0, batch_size=None))
+        if xla_found:
+            eval_loader = iter(pl.MpDeviceLoader(eval_loader, self.device))
+
+        return train_loader, eval_loader
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
@@ -166,7 +191,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             model_config = CONFIG_MAPPING[self.model_type]()
         return model_config
 
-    def get_tokenizer(self, tokenizer_name=None, use_fast=None):
+    def get_tokenizer(self, tokenizer_name="./tokenizer/", use_fast=True):
         # Load pretrained model and tokenizer
         if tokenizer_name:
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=self.cache_dir, use_fast=use_fast)
@@ -178,52 +203,72 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return tokenizer
 
     def reduce_gradients(self):
-        if not self.is_distributed:
+        # AllReduce the model gradients so we can step the global gradient
+        if not xla_found:
             return
 
-        # AllReduce the model gradients so we can step the global gradient
-        for param in self.model.parameters():
-            if param.grad is not None:
-                # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()}")
-                dist.all_reduce(param.grad / dist.get_world_size())
-                # print(f"rank: {dist.get_rank()}, param.grad: {param.grad.sum()} after")
+        xm.reduce_gradients(self.optimizer)
+
+        if not self.is_multi_host:
+            return
+
+        if self.is_master_ordinal:
+            dist.all_reduce(param.grad.cpu() / dist.get_world_size())
+            xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
+        else:
+            zeros = torch.zeros_like(param.grad)
+            xm.all_reduce(xm.REDUCE_SUM, zeros)
+
+    def _train_update(self, device, step, loss, tracker):
+        test_utils.print_training_update(
+            device,
+            step, 
+            loss.item(),
+            tracker.rate(),
+            tracker.global_rate())
 
     def run(self):
-        for _ in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
-            samples = self.get_samples(self.train_dataset)
+        if xla_found:
+            tracker = xm.RateTracker()
+        for trainstep in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+            samples = next(self.train_loader)
+            time_epoch = time.time()
             self.optimizer.zero_grad()
-
             x_hat = self.model(**samples)
-
             x_hat.loss.backward()
-
-            self.reduce_gradients()
-
-            self.optimizer.step()
+            self.reduce_gradients()     
+            xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
-            if self.get("use_wandb"):
-                self.wandb_log(**{"train_loss": x_hat.loss.detach()})
+            if xla_found:
+                tracker.add(self.get("per_device_train_batch_size") * self.global_world_size)
+                xm.add_step_closure(
+                    self._train_update,
+                    args=(self.device, trainstep, x_hat.loss, tracker))
 
-            # log gradients once per epoch
-            if self.get("use_wandb"):
-                self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
-
+                if self.is_master_ordinal and self.get("use_wandb"):
+                    self.wandb_log(**{"train_loss": x_hat.loss.cpu().detach()})
+                    self.wandb_watch(self.model, x_hat.loss.detach(), log_freq=1)
+                    self.wandb_log(**{"it/s": time.time()-time_epoch})
             # Checkpoint
-            if self.step % self.get("checkpoint_every") == 0:
-                torch.save(
-                    self.model.state_dict(),
-                    open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
-                )
+            # TODO: I benchmarked this and it is extremely slow -- speed it up 
+            #if self.step % self.get("checkpoint_every") == 0:
+            #    torch.save(
+            #        self.model.state_dict(),
+            #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
+            #    )
+            #    print(f"checkpoint took: {time.time()-start}")
+            # print(met.metrics_report())
+
 
             # Run Validation
-            if self.step % self.get("eval_every") == 0:
+            if self.step % self.get("eval_every", 5) == 0:
                 self.model.eval()
                 for _ in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
-                    samples = self.get_samples(self.eval_dataset)
-                    x_hat, input, mu, log_var = self.model(**samples)
-                    if self.get("use_wandb"):
-                        self.wandb_log(**{"valid_loss": x_hat.loss.detach()})
+                    samples = next(self.eval_loader)
+                    x_hat = self.model(**samples)
 
+                    # if self.is_master_ordinal and self.get("use_wandb"):
+                    #     self.wandb_log(**{"valid_loss": x_hat.loss.cpu().detach()})
                 self.model.train()
 
     @property
@@ -245,18 +290,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     #             commit_message=f"Saving weights and logs of step {self.step}"
     #         )
 
-    def get_samples(self, iterable_dataset):
-        samples = next(iterable_dataset)
-        shape = (-1, self.get("max_seq_length"))
-        samples["decoder_input_ids"] = shift_tokens_right(samples['targets'],
-                                                          self.model.config.pad_token_id,
-                                                          self.model.config.decoder_start_token_id)
-        samples = {"input_ids": torch.tensor(samples["inputs"], dtype=torch.long).view(shape),
-         "labels": torch.tensor(samples["targets"], dtype=torch.long).view(shape),
-         "decoder_input_ids": torch.tensor(samples["decoder_input_ids"], dtype=torch.long).view(shape)}
-        return samples
 
-
+def _mp_fn(index, args):
+    Experiment1().run()
 
 if __name__ == '__main__':
-    Experiment1().run()
+    if xla_found:
+        xmp.spawn(_mp_fn, args=({},), nprocs=8)
+    else:
+        Experiment1().run()
