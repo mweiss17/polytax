@@ -1,4 +1,7 @@
 import setuptools
+import os 
+
+os.system('pip install git+https://github.com/inferno-pytorch/speedrun.git@master')
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -28,6 +31,7 @@ setuptools.setup(
         'tensorflow_datasets',
         'mesh_tensorflow',
         't5',
+        'mesh-tensorflow',
         'seqio==0.0.5',
         'clu',
         'tbp-nightly',
@@ -36,7 +40,6 @@ setuptools.setup(
         'tensorboardX',
         'dill',
         'torch_lr_scheduler',
-        'speedrun @ git+ssh://git@github.com/inferno-pytorch/speedrun@master#egg=speedrun',
         'transformers @ git+ssh://git@github.com/mweiss17/transformers@master#egg=transformers'
 
     ]

@@ -116,6 +116,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         set_seed(self.seed) # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
+
+        # TODO: Train a new tokenizer
         self.tokenizer = self.get_tokenizer(**self.get("tokenizer/kwargs"))
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         self.train_batch_size = int(self.get("per_device_train_batch_size"))
