@@ -273,7 +273,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.log(self.step, x, x_hat, tracker, valid_split=False)
 
             # Run Validation
-            if self.step % self.get("eval_every", 5) == 0:
+            if self.evaluate_now:
                 self.model.eval()
                 for _ in range(self.get("num_eval_steps")):
                     x = next(self.eval_loader)
@@ -281,34 +281,22 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                     self.log(self.step, x, x_hat, tracker, valid_split=True)
                 self.model.train()
 
-                # Checkpoint
-                # TODO: I benchmarked this and it is extremely slow -- speed it up
-                # if self.step % self.get("checkpoint_every") == 0:
-                #    torch.save(
-                #        self.model.state_dict(),
-                #        open(f"{self.experiment_directory}/Weights/model-{self.epoch}.pt", "wb"),
-                #    )
-                #    print(f"checkpoint took: {time.time()-start}")
-                # print(met.metrics_report())
-
     @property
     def evaluate_now(self):
-        return self.step % self.get("eval_steps") == 0 and self.step > 0
+        return self.step % self.get("eval_every") == 0 and self.step > 0
 
     @property
     def save_now(self):
-        return self.step % self.get("save_steps") == 0 and self.step > 0
+        return self.step % self.get("save_every") == 0 and self.step > 0
 
-    # TODO add checkpoints
-    # def checkpoint(self):
-    #     if self.save_now and jax.process_index() == 0:
-    #         params = jax.device_get(jax.tree_map(lambda x: x[0], self.state.params))
-    #         self.model.save_pretrained(
-    #             self.checkpoint_directory,
-    #             params=params,
-    #             push_to_hub=False,
-    #             commit_message=f"Saving weights and logs of step {self.step}"
-    #         )
+    def checkpoint(self):
+        if not self.save_now:
+            return
+        checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+        if xla_found:
+            xm.save(self.model.state_dict(), checkpoint_path)
+        else:
+            torch.save(self.model.state_dict(), checkpoint_path)
 
 
 def _mp_fn(index, args):
