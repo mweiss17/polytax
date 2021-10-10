@@ -25,7 +25,7 @@ unset LD_PRELOAD
 export XRT_TPU_CONFIG="localservice;0;localhost:51011"
 echo export XRT_TPU_CONFIG >> ~/.bashrc
 
-python3 train.py experiments/$expname --inherit $templatename
+python3 -m torch.distributed.run --nnodes=1 --nproc_per_node=1 --rdzv_id=1 --rdzv_backend=c10d --rdzv_endpoint="localhost:2379"  train.py experiments/$expname --inherit $templatename
 
 # Once we get some distributed stuff working...
 # python3 launch.py --rank=$rank --addr=$addr --port=2345
