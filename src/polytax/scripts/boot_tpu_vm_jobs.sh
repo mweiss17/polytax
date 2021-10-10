@@ -8,6 +8,7 @@ TEMPLATENAME=${4:"templates/t5-xs-shakespeare"}
 NETWORK=${5:-"tpu-network"}
 SUBNETWORK=${6:-"swarm-2"}
 RANGE=${7:-"192.169.0.0/29"}
+USER=${8:-"martin"}
 echo launching $NUMNODES nodes on $NETWORK/$SUBNETWORK
 
 # Boot control plane node
@@ -47,7 +48,7 @@ for i in $(seq 0 $(($NUMNODES-1))); do
   NODENAME="node-$(($i+$ROOTID))"
   echo running startup script on $NODENAME
 
-  gcloud alpha compute tpus tpu-vm ssh $NODENAME --zone us-central1-f --command "cd ~/; git clone https://github.com/mweiss17/polytax.git; chmod 755 polytax/src/polytax/scripts/*.sh; ./polytax/src/polytax/scripts/launch_tpu.sh $i localhost $EXPNAME $TEMPLATENAME"
+  gcloud alpha compute tpus tpu-vm ssh $USER@$NODENAME --zone us-central1-f --command "cd ~/; git clone https://github.com/mweiss17/polytax.git; chmod 755 polytax/src/polytax/scripts/*.sh; ./polytax/src/polytax/scripts/launch_tpu.sh $i localhost $EXPNAME $TEMPLATENAME"
 
 done
 
