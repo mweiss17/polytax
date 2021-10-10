@@ -36,8 +36,8 @@ setuptools.setup(
         'tensorboardX',
         'dill',
         'torch_lr_scheduler',
-        'speedrun @ git+ssh://git@github.com/inferno-pytorch/speedrun@master#egg=speedrun',
-        'transformers @ git+ssh://git@github.com/mweiss17/transformers@master#egg=transformers'
+        'speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@master#egg=speedrun',
+        'transformers @ git+https://git@github.com/mweiss17/transformers@master#egg=transformers'
 
     ]
 )
