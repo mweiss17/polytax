@@ -117,6 +117,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         self.train_batch_size = int(self.get("per_device_train_batch_size"))
         self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
+        self.total_batch_size = self.train_batch_size * self.local_world_size * self.global_world_size
+        self.tracker = RateTracker()
 
         # Build the data loaders
         self.train_loader, self.eval_loader = self._build_loaders()
@@ -150,9 +152,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
         train_loader = iter(SeqioWrapperDataset(train_dataset))
-        # train_loader = iter(torch.utils.data.DataLoader(iter(train_dataset), num_workers=0, batch_size=None))
-        if xla_found:
-            train_loader = pl.MpDeviceLoader(train_loader, self.device)
+
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -167,9 +167,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         eval_dataset = itertools.cycle(eval_dataset)
         eval_loader = iter(SeqioWrapperDataset(eval_dataset))
-        # eval_loader = iter(torch.utils.data.DataLoader(iter(eval_dataset), num_workers=0, batch_size=None))
+
         if xla_found:
             eval_loader = pl.MpDeviceLoader(eval_loader, self.device)
+            train_loader = pl.MpDeviceLoader(train_loader, self.device)
 
         return train_loader, eval_loader
 
@@ -222,7 +223,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
         return accuracy
 
-    def _update_logs(self, step, x, x_hat, tracker, valid_split):
+    def _update_logs(self, step, x, x_hat, valid_split):
         # Returns if we aren't logging to wandb or we're not the master proc
         if not self.is_master_ordinal or not self.get("use_wandb"):
             return
@@ -237,29 +238,31 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print_test_update(self.device, accuracy, self.step)
         else:
             # Logs to stdout
-            print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
+            print_training_update(self.device, step, x_hat.loss.item(), self.tracker.rate(), self.tracker.global_rate())
             self.wandb_log(**{"train_loss": x_hat.loss.item()})
             # Write speeds to wandb, log gradients
-            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
+            self.wandb_log(**{"instantaneous it/s": self.tracker.rate(), "global it/s": self.tracker.global_rate()})
             self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
             # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
             # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
 
 
-    def log(self, step, x, x_hat, tracker, valid_split):
+    def log(self, step, x, x_hat, valid_split):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
             xm.add_step_closure(
                 self._update_logs,
-                args=(step, x, x_hat, tracker, valid_split))
+                args=(step, x, x_hat, valid_split))
 
         # Otherwise just call the function to log directly
         else:
-            self._update_logs(step, x, x_hat, tracker, valid_split)
+            self._update_logs(step, x, x_hat, valid_split)
 
-    def run(self):
-        tracker = RateTracker()
-        for _ in range(self.get("num_train_steps")):
+    def train_loop(self):
+        self.model.train()
+
+        # Train for N steps until you need to evaluate
+        for _ in range(self.get("eval_every")):
             x = next(self.train_loader)
             self.optimizer.zero_grad()
             x_hat = self.model(**x)
@@ -267,23 +270,26 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.reduce_gradients()
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
-            
-	    # increment tracker for this batch
-            batch_size = self.train_batch_size * self.local_world_size * self.global_world_size
-            tracker.add(batch_size)
-
+            self.tracker.add(self.total_batch_size)
             if self.log_now:
-                self.log(self.step, x, x_hat, tracker, valid_split=False)
+                self.log(self.step, x, x_hat, valid_split=False)
 
-            # Run Validation
-            if self.evaluate_now:
-                with torch.no_grad():
-                    self.model.eval()
-                    for _ in range(self.get("num_eval_steps")):
-                        x = next(self.eval_loader)
-                        x_hat = self.model(**x)
-                        self.log(self.step, x, x_hat, tracker, valid_split=True)
-                    self.model.train()
+    def eval_loop(self):
+        # Run Validation
+        with torch.no_grad():
+            self.model.eval()
+            for _ in range(self.get("num_eval_steps")):
+                x = next(self.eval_loader)
+                x_hat = self.model(**x)
+                self.log(self.step, x, x_hat, valid_split=True)
+
+    def run(self):
+        # The number of iterations to run is the number of training steps divided by the evaluation rate
+        iterations = int(self.get("num_train_steps") / self.get("eval_every"))
+        # Python is function scoped, so in order to not get OOM errors, we put train and valid in separate loops
+        for _ in range(iterations):
+            self.train_loop()
+            self.eval_loop()
 
     @property
     def log_now(self):
