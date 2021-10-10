@@ -223,7 +223,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
         return accuracy
 
-    def _update_logs(self, step, x, x_hat, valid_split):
+    def _update_logs(self, step, tracker, x, x_hat, valid_split):
         # Returns if we aren't logging to wandb or we're not the master proc
         if not self.is_master_ordinal or not self.get("use_wandb"):
             return
@@ -232,31 +232,31 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if valid_split:
             gt, pred = self.decode(x, x_hat)
             accuracy = self.compute_accuracy(x, x_hat)
-            self.table.add_data(self.step, gt, pred)
+            self.table.add_data(step, gt, pred)
             self.wandb_log(**{"examples": self.table})
             self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "val_loss": x_hat.loss.item()})
-            print_test_update(self.device, accuracy, self.step)
+            print_test_update(self.device, accuracy, step)
         else:
             # Logs to stdout
-            print_training_update(self.device, step, x_hat.loss.item(), self.tracker.rate(), self.tracker.global_rate())
+            print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
             self.wandb_log(**{"train_loss": x_hat.loss.item()})
             # Write speeds to wandb, log gradients
-            self.wandb_log(**{"instantaneous it/s": self.tracker.rate(), "global it/s": self.tracker.global_rate()})
+            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
             self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
             # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
             # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
 
 
-    def log(self, step, x, x_hat, valid_split):
+    def log(self, x, x_hat, valid_split):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
             xm.add_step_closure(
                 self._update_logs,
-                args=(step, x, x_hat, valid_split))
+                args=(self.step, self.tracker, x, x_hat, valid_split))
 
         # Otherwise just call the function to log directly
         else:
-            self._update_logs(step, x, x_hat, valid_split)
+            self._update_logs(self.step, self.tracker, x, x_hat, valid_split)
 
     def train_loop(self):
         self.model.train()
@@ -272,7 +272,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.next_step()
             self.tracker.add(self.total_batch_size)
             if self.log_now:
-                self.log(self.step, x, x_hat, valid_split=False)
+                self.log(x, x_hat, valid_split=False)
 
     def eval_loop(self):
         # Run Validation
