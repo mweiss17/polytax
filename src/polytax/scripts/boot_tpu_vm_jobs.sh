@@ -3,8 +3,8 @@
 # Read inputs
 ROOTID=${1:-"0"}
 NUMNODES=${2:-2}
-EXPNAME=${3:"experiments/t5-xs-shakespeare-test"}
-TEMPLATENAME=${4:"templates/t5-xs-shakespeare"}
+EXPNAME=${3:-"experiments/t5-xs-shakespeare-test"}
+TEMPLATENAME=${4:-"templates/t5-xs-shakespeare"}
 NETWORK=${5:-"tpu-network"}
 SUBNETWORK=${6:-"swarm-2"}
 RANGE=${7:-"192.169.0.0/29"}
