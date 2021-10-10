@@ -281,7 +281,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             for _ in range(self.get("num_eval_steps")):
                 x = next(self.eval_loader)
                 x_hat = self.model(**x)
-                self.log(self.step, x, x_hat, valid_split=True)
+                self.log(x, x_hat, valid_split=True)
 
     def run(self):
         # The number of iterations to run is the number of training steps divided by the evaluation rate
