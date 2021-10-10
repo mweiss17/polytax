@@ -21,7 +21,7 @@ export PATH=$PATH:/home/$USER/.local/bin
 unset LD_PRELOAD
 export XRT_TPU_CONFIG="localservice;0;localhost:51011"
 
-python3 train.py experiments/$expname --inherit templates/$templatename/
+python3 train.py experiments/$expname --inherit $templatename
 
 # Once we get some distributed stuff working...
 # python3 launch.py --rank=$rank --addr=$addr --port=2345
