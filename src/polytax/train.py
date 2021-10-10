@@ -50,17 +50,18 @@ global xla_found
 try:
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
-    import torch_xla.core.xla_model.RateTracker as RateTracker
+    from torch_xla.core.xla_model import RateTracker
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
-    import torch_xla.test.test_utils.print_training_update as print_update
+    import torch_xla.test.test_utils as test_utils
+    from torch_xla.test.test_utils import print_training_update, print_test_update
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_env_vars as xenv
     xla_found = True
 except Exception as e:
     print(f"XLA not found {e} \n")
     xla_found = False
-    from utils.tracker import RateTracker, print_train_update, print_test_update
+    from utils.tracker import RateTracker, print_training_update, print_test_update
 
 
 class SeqioWrapperDataset(torch.utils.data.IterableDataset):
@@ -151,7 +152,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_loader = iter(SeqioWrapperDataset(train_dataset))
         # train_loader = iter(torch.utils.data.DataLoader(iter(train_dataset), num_workers=0, batch_size=None))
         if xla_found:
-            train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
+            train_loader = pl.MpDeviceLoader(train_loader, self.device)
         try:
             eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
                                                   shuffle=True, seed=self.seed, num_epochs=1)
@@ -168,7 +169,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         eval_loader = iter(SeqioWrapperDataset(eval_dataset))
         # eval_loader = iter(torch.utils.data.DataLoader(iter(eval_dataset), num_workers=0, batch_size=None))
         if xla_found:
-            eval_loader = iter(pl.MpDeviceLoader(eval_loader, self.device))
+            eval_loader = pl.MpDeviceLoader(eval_loader, self.device)
 
         return train_loader, eval_loader
 
@@ -190,7 +191,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # AllReduce the model gradients so we can step the global gradient
         if not xla_found:
             return
-
+        
         xm.reduce_gradients(self.optimizer)
 
         if not self.is_multi_host:
@@ -236,7 +237,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print_test_update(self.device, accuracy, self.step)
         else:
             # Logs to stdout
-            print_train_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
+            print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
             self.wandb_log(**{"train_loss": x_hat.loss.item()})
             # Write speeds to wandb, log gradients
             self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
@@ -246,15 +247,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
     def log(self, step, x, x_hat, tracker, valid_split):
-        # increment tracker for this batch
-        batch_size = (self.eval_batch_size if valid_split else self.train_batch_size) * self.global_world_size
-        tracker.add(batch_size)
-
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
             xm.add_step_closure(
                 self._update_logs,
-                args=(self.device, step, x, x_hat, tracker, valid_split))
+                args=(step, x, x_hat, tracker, valid_split))
 
         # Otherwise just call the function to log directly
         else:
@@ -270,16 +267,27 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.reduce_gradients()
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
-            self.log(self.step, x, x_hat, tracker, valid_split=False)
+            
+	    # increment tracker for this batch
+            batch_size = self.train_batch_size * self.local_world_size * self.global_world_size
+            tracker.add(batch_size)
+
+            if self.log_now:
+                self.log(self.step, x, x_hat, tracker, valid_split=False)
 
             # Run Validation
             if self.evaluate_now:
-                self.model.eval()
-                for _ in range(self.get("num_eval_steps")):
-                    x = next(self.eval_loader)
-                    x_hat = self.model(**x)
-                    self.log(self.step, x, x_hat, tracker, valid_split=True)
-                self.model.train()
+                with torch.no_grad():
+                    self.model.eval()
+                    for _ in range(self.get("num_eval_steps")):
+                        x = next(self.eval_loader)
+                        x_hat = self.model(**x)
+                        self.log(self.step, x, x_hat, tracker, valid_split=True)
+                    self.model.train()
+
+    @property
+    def log_now(self):
+        return self.step % self.get("log_every") == 0 and self.step > 0
 
     @property
     def evaluate_now(self):

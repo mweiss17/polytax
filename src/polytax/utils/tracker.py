@@ -48,7 +48,7 @@ def now(format='%H:%M:%S'):
   return datetime.now().strftime(format)
 
 
-def print_train_update(device,
+def print_training_update(device,
                   step,
                   loss,
                   rate,
