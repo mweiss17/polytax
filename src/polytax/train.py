@@ -169,8 +169,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         eval_loader = iter(SeqioWrapperDataset(eval_dataset))
 
         if xla_found:
-            eval_loader = pl.MpDeviceLoader(eval_loader, self.device)
-            train_loader = pl.MpDeviceLoader(train_loader, self.device)
+            eval_loader = iter(pl.MpDeviceLoader(eval_loader, self.device))
+            train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
 
         return train_loader, eval_loader
 
