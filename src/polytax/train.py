@@ -50,24 +50,18 @@ global xla_found
 try:
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
+    import torch_xla.core.xla_model.RateTracker as RateTracker
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
-    import torch_xla.test.test_utils as test_utils
+    import torch_xla.test.test_utils.print_training_update as print_update
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_env_vars as xenv
     xla_found = True
 except Exception as e:
     print(f"XLA not found {e} \n")
     xla_found = False
+    from utils.tracker import RateTracker, print_train_update, print_test_update
 
-def setup_logging():
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-        level=logging.INFO,
-        datefmt="[%X]",
-    )
-    logger = logging.getLogger(__name__)
-    return logger
 
 class SeqioWrapperDataset(torch.utils.data.IterableDataset):
     # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset
@@ -98,8 +92,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.is_multi_host = self.global_world_size > 1
         self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
         print(f"total shards: {self.total_shards}")
-       
-        # one process per host  
+
+        # one process per host
         if self.is_multi_host and self.is_master_ordinal:
             dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
 
@@ -113,21 +107,20 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self._build()
 
     def _build(self):
-        self.logger = setup_logging()
         print(f"{self._config}")
         self.seed = self.get("seed", 1)
-        set_seed(self.seed) # handles random seed setting for everything but XLA
+        set_seed(self.seed)  # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
         self.tokenizer = dataset.get_default_vocabulary()
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         self.train_batch_size = int(self.get("per_device_train_batch_size"))
-        self.eval_batch_size = int(self.get("per_device_eval_batch_size")) 
-        
+        self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
+
         # Build the data loaders
         self.train_loader, self.eval_loader = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
-        
+
         #self.model = MpModelWrapper(self.model)
         # No need to specify Learning Rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optimizer = Adafactor(
@@ -210,26 +203,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             zeros = torch.zeros_like(param.grad)
             xm.all_reduce(xm.REDUCE_SUM, zeros)
 
-    def _train_update(self, device, step, loss, tracker):
-        test_utils.print_training_update(
-            device,
-            step, 
-            loss.item(),
-            tracker.rate(),
-            tracker.global_rate())
-        if self.is_master_ordinal and self.get("use_wandb"):
-            # self.wandb_watch(self.model, loss.item()), log_freq=1)
-            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate(), "train_loss": loss.item()})
-
     def decode(self, x, x_hat):
         one_sample_logits = x_hat.logits[0, :]
         gt = self.tokenizer.decode(x['input_ids'][0, :].cpu().numpy().tolist())
         pred = self.tokenizer.decode(one_sample_logits.argmax(axis=1).cpu().numpy().tolist())
         return gt, pred
-
-    def send_wandb_table(self, gt, pred):
-        self.table.add_data(self.step, gt, pred)
-        wandb.log({"examples": self.table})
 
     def compute_accuracy(self, x, x_hat):
         correct = 0
@@ -243,55 +221,64 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
         return accuracy
 
-    def _val_update(self, device, step, x_hat, x, tracker):
-        test_utils.print_training_update(
-            device,
-            step,
-            x_hat.loss.item(),
-            tracker.rate(),
-            tracker.global_rate())
-        gt, pred = self.decode(x, x_hat)
-        accuracy = self.compute_accuracy(x, x_hat)
-        if self.is_master_ordinal and self.get("use_wandb"):
-            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate(), "val_loss": x_hat.loss.item()})
-            self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy})
+    def _update_logs(self, step, x, x_hat, tracker, valid_split):
+        # Returns if we aren't logging to wandb or we're not the master proc
+        if not self.is_master_ordinal or not self.get("use_wandb"):
+            return
+
+        # If we're logging the valid split, then we can decode and look at the accuracy
+        if valid_split:
+            gt, pred = self.decode(x, x_hat)
+            accuracy = self.compute_accuracy(x, x_hat)
+            self.table.add_data(self.step, gt, pred)
+            self.wandb_log(**{"examples": self.table})
+            self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "val_loss": x_hat.loss.item()})
+            print_test_update(self.device, accuracy, self.step)
+        else:
+            # Logs to stdout
+            print_train_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
+            self.wandb_log(**{"train_loss": x_hat.loss.item()})
+            # Write speeds to wandb, log gradients
+            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
+            self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
+            # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
+            # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
+
+
+    def log(self, step, x, x_hat, tracker, valid_split):
+        # increment tracker for this batch
+        batch_size = (self.eval_batch_size if valid_split else self.train_batch_size) * self.global_world_size
+        tracker.add(batch_size)
+
+        # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
+        if xla_found:
+            xm.add_step_closure(
+                self._update_logs,
+                args=(self.device, step, x, x_hat, tracker, valid_split))
+
+        # Otherwise just call the function to log directly
+        else:
+            self._update_logs(step, x, x_hat, tracker, valid_split)
 
     def run(self):
-        if xla_found:
-            tracker = xm.RateTracker()
-        for trainstep in self.progress(range(self.get("num_train_steps")), desc="Training", tag="train"):
+        tracker = RateTracker()
+        for _ in range(self.get("num_train_steps")):
             x = next(self.train_loader)
             self.optimizer.zero_grad()
             x_hat = self.model(**x)
             x_hat.loss.backward()
-            self.reduce_gradients()     
+            self.reduce_gradients()
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
-            if xla_found:
-                tracker.add(self.get("per_device_train_batch_size") * self.global_world_size)
-                xm.add_step_closure(
-                    self._train_update,
-                    args=(self.device, trainstep, x_hat.loss, tracker))
-            elif self.is_master_ordinal and self.get("use_wandb"):
-                gt, pred = self.decode(x, x_hat)
-                self.send_wandb_table(gt, pred)
-                self.wandb_log(**{"train_loss": x_hat.loss.item()})
+            self.log(self.step, x, x_hat, tracker, valid_split=False)
 
             # Run Validation
             if self.step % self.get("eval_every", 5) == 0:
                 self.model.eval()
-                for valstep in self.progress(range(self.get("num_eval_steps")), desc="Evaluating...", tag="train"):
+                for _ in range(self.get("num_eval_steps")):
                     x = next(self.eval_loader)
                     x_hat = self.model(**x)
-                    if xla_found:
-                        xm.add_step_closure(
-                            self._val_update,
-                            args=(self.device, valstep, x_hat, x, tracker))
-                    elif self.is_master_ordinal and self.get("use_wandb"):
-                        gt, pred = self.decode(x, x_hat)
-                        accuracy = self.compute_accuracy(x, x_hat)
-                        self.wandb_log(**{"val_loss": x_hat.loss.item(), "ground_truth": gt, "predicted": pred, "val_accuracy": accuracy})
-
+                    self.log(self.step, x, x_hat, tracker, valid_split=True)
                 self.model.train()
 
                 # Checkpoint
