@@ -269,7 +269,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # Otherwise just call the function to log directly
         else:
             self._update_logs(self.step, self.tracker, x, x_hat, valid_split)
-
+    @register_default_dispatch
     def train_loop(self):
         self.model.train()
 
@@ -285,7 +285,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.tracker.add(self.total_batch_size)
             if self.log_now:
                 self.log(x, x_hat, valid_split=False)
-
+    @register_default_dispatch
     def eval_loop(self):
         # Run Validation
         with torch.no_grad():
