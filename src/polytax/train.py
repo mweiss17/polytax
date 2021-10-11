@@ -330,7 +330,6 @@ def _mp_fn(index, args):
     Experiment1().run()
 
 class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
-    @register_default_dispatch
     def __init__(self):
         WandBSweepMixin.WANDB_ENTITY = "polytax"
         WandBSweepMixin.WANDB_PROJECT = "mweiss10"
