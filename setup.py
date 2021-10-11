@@ -38,9 +38,7 @@ setuptools.setup(
         'torch_lr_scheduler',
         'speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@master#egg=speedrun',
         'transformers @ git+https://git@github.com/mweiss17/transformers@master#egg=transformers',
-    ],
-    dependency_links = [
-        'https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl'
-    ],
+        'torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl'
+        ],
 )
 
