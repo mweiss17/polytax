@@ -55,6 +55,8 @@ import torch.distributed as dist
 from transformers.optimization import Adafactor
 from torch.utils.data import DataLoader
 
+sys.path.append(os.getcwd())
+
 global xla_found
 try:
     import torch_xla.distributed.xla_multiprocessing as xmp
