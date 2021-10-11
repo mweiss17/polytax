@@ -10,10 +10,10 @@ tokenizer:
     use_fast: True
 
 # Dataset and Batch Size
-dataset_name: "realnewslike.en"
+dataset_name: "c4.en"
 max_seq_length: 512
-per_device_train_batch_size: 32
-per_device_eval_batch_size: 32
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 8
 
 # Optimization
 adafactor: "True"

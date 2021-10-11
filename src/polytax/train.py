@@ -121,10 +121,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.tracker = RateTracker()
 
         # Build the data loaders
-        self.train_loader, self.eval_loader = self._build_loaders()
+        self.train_loader = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
 
-        #self.model = MpModelWrapper(self.model)
         # No need to specify Learning Rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optimizer = Adafactor(
             self.model.parameters(),
@@ -153,26 +152,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         train_dataset = itertools.cycle(train_dataset)
         train_loader = iter(SeqioWrapperDataset(train_dataset))
 
-        try:
-            eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="validation", use_cached=False,
-                                                  shuffle=True, seed=self.seed, num_epochs=1)
-        except Exception:
-            print("no validation set")
-            eval_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train[:90%]", use_cached=False,
-                                                                      shuffle=True, seed=self.seed, num_epochs=1)
-            if self.total_shards > 1:
-                eval_dataset = eval_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
-        eval_dataset = pack_or_pad(eval_dataset, sequence_length, feature_keys=self.task.output_features,
-                                    ensure_eos=eos_keys, pack=True)
-        eval_dataset = eval_dataset.batch(self.eval_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        eval_dataset = itertools.cycle(eval_dataset)
-        eval_loader = iter(SeqioWrapperDataset(eval_dataset))
-
         if xla_found:
-            eval_loader = iter(pl.MpDeviceLoader(eval_loader, self.device))
             train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
 
-        return train_loader, eval_loader
+        return train_loader
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
@@ -198,12 +181,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if not self.is_multi_host:
             return
 
-        if self.is_master_ordinal:
-            dist.all_reduce(param.grad.cpu() / dist.get_world_size())
-            xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
-        else:
-            zeros = torch.zeros_like(param.grad)
-            xm.all_reduce(xm.REDUCE_SUM, zeros)
+        # if self.is_master_ordinal:
+        #     dist.all_reduce(param.grad.cpu() / dist.get_world_size())
+        #     xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
+        # else:
+        #     zeros = torch.zeros_like(param.grad)
+        #     xm.all_reduce(xm.REDUCE_SUM, zeros)
 
     def decode(self, x, x_hat):
         one_sample_logits = x_hat.logits[0, :]
@@ -219,8 +202,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         total_samples += x['input_ids'].size()[1]
 
         accuracy = 100.0 * correct.item() / total_samples
-        if xla_found:
-            accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
         return accuracy
 
     def _update_logs(self, step, tracker, x, x_hat, valid_split):
@@ -228,23 +209,22 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if not self.is_master_ordinal or not self.get("use_wandb"):
             return
 
-        # If we're logging the valid split, then we can decode and look at the accuracy
-        if valid_split:
-            gt, pred = self.decode(x, x_hat)
-            accuracy = self.compute_accuracy(x, x_hat)
-            self.table.add_data(step, gt, pred)
-            self.wandb_log(**{"examples": self.table})
-            self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "val_loss": x_hat.loss.item()})
-            print_test_update(self.device, accuracy, step)
-        else:
-            # Logs to stdout
-            print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
-            self.wandb_log(**{"train_loss": x_hat.loss.item()})
-            # Write speeds to wandb, log gradients
-            self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
-            self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
-            # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
-            # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
+        # Print to console what's going on
+        print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
+
+        # Write speeds to wandb
+        self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
+
+        # Log gradients TODO I think these are slow, so some are commented
+        self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
+        # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
+        # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
+
+        # Get a text example and log it
+        gt, pred = self.decode(x, x_hat)
+        accuracy = self.compute_accuracy(x, x_hat)
+        self.table.add_data(step, gt, pred)
+        self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item()})
 
 
     def log(self, x, x_hat, valid_split):
@@ -252,17 +232,17 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if xla_found:
             xm.add_step_closure(
                 self._update_logs,
-                args=(self.step, self.tracker, x, x_hat, valid_split))
+                args=(self.step, self.tracker, x, x_hat))
 
         # Otherwise just call the function to log directly
         else:
-            self._update_logs(self.step, self.tracker, x, x_hat, valid_split)
+            self._update_logs(self.step, self.tracker, x, x_hat)
 
-    def train_loop(self):
+    def run(self):
         self.model.train()
 
         # Train for N steps until you need to evaluate
-        for _ in range(self.get("eval_every")):
+        for _ in range(self.get("num_train_steps")):
             x = next(self.train_loader)
             self.optimizer.zero_grad()
             x_hat = self.model(**x)
@@ -272,24 +252,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.next_step()
             self.tracker.add(self.total_batch_size)
             if self.log_now:
-                self.log(x, x_hat, valid_split=False)
-
-    def eval_loop(self):
-        # Run Validation
-        with torch.no_grad():
-            self.model.eval()
-            for _ in range(self.get("num_eval_steps")):
-                x = next(self.eval_loader)
-                x_hat = self.model(**x)
-                self.log(x, x_hat, valid_split=True)
-
-    def run(self):
-        # The number of iterations to run is the number of training steps divided by the evaluation rate
-        iterations = int(self.get("num_train_steps") / self.get("eval_every"))
-        # Python is function scoped, so in order to not get OOM errors, we put train and valid in separate loops
-        for _ in range(iterations):
-            self.train_loop()
-            self.eval_loop()
+                self.log(x, x_hat)
 
     @property
     def log_now(self):
