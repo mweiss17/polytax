@@ -12,8 +12,8 @@ tokenizer:
 # Dataset and Batch Size
 dataset_name: "c4.en"
 max_seq_length: 512
-per_device_train_batch_size: 16 
-per_device_eval_batch_size: 16 
+per_device_train_batch_size: 32
+per_device_eval_batch_size: 32
 
 # Optimization
 adafactor: "True"
