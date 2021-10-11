@@ -270,36 +270,32 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self._update_logs(self.step, self.tracker, x, x_hat, valid_split)
     @register_default_dispatch
     def trainloop(self):
-        self.model.train()
-
-        # Train for N steps until you need to evaluate
-        for _ in range(self.get("eval_every")):
-            x = next(self.train_loader)
-            self.optimizer.zero_grad()
-            x_hat = self.model(**x)
-            x_hat.loss.backward()
-            self.reduce_gradients()
-            xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
-            self.next_step()
-            self.tracker.add(self.total_batch_size)
-            if self.log_now:
-                self.log(x, x_hat, valid_split=False)
-
-            # Eval
-            with torch.no_grad():
-                self.model.eval()
-                for _ in range(self.get("num_eval_steps")):
-                    x = next(self.eval_loader)
-                    x_hat = self.model(**x)
-                    valid_loss = x_hat.loss.item()
-                    self.log(x, x_hat, valid_split=True)
-
-    def run(self):
         # The number of iterations to run is the number of training steps divided by the evaluation rate
         iterations = int(self.get("num_train_steps") / self.get("eval_every"))
-        # Python is function scoped, so in order to not get OOM errors, we put train and valid in separate loops
         for _ in range(iterations):
-            self.trainloop()
+            self.model.train()
+
+            # Train for N steps until you need to evaluate
+            for _ in range(self.get("eval_every")):
+                x = next(self.train_loader)
+                self.optimizer.zero_grad()
+                x_hat = self.model(**x)
+                x_hat.loss.backward()
+                self.reduce_gradients()
+                xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
+                self.next_step()
+                self.tracker.add(self.total_batch_size)
+                if self.log_now:
+                    self.log(x, x_hat, valid_split=False)
+
+                # Eval
+                with torch.no_grad():
+                    self.model.eval()
+                    for _ in range(self.get("num_eval_steps")):
+                        x = next(self.eval_loader)
+                        x_hat = self.model(**x)
+                        valid_loss = x_hat.loss.item()
+                        self.log(x, x_hat, valid_split=True)
 
     @property
     def log_now(self):
