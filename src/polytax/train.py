@@ -137,7 +137,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _build_loaders(self):
         # determine maximum sequence length to use
-        sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length") / 4)}
+        sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length")/4)}
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
@@ -223,7 +223,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         for (step, input, label, pred) in self.samples_table:
             self.table.add_data(step, input, label, pred)
         self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item(), "negative log perplexity": -x_hat.loss.item()})
-        print(f"input: {input}, label: {label}, pred: {pred}")
+        # print(f"input: {input}, label: {label}, pred: {pred}")
 
     def log(self, x, x_hat):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency

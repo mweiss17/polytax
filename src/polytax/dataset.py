@@ -18,10 +18,6 @@ DEFAULT_EXTRA_IDS = 100
 def get_default_vocabulary():
       return seqio.SentencePieceVocabulary(DEFAULT_SPM_PATH, DEFAULT_EXTRA_IDS)
 
-def perplexity(targets, scores):
-  return {
-    "negative_log_perplexity": seqio.evaluation.Scalar(np.mean(scores))
-  }
 
 ## Setup dataset
 DEFAULT_OUTPUT_FEATURES = {
@@ -57,20 +53,20 @@ seqio.TaskRegistry.add(
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
-    metric_fns=[perplexity])
+    metric_fns=[])
 
 seqio.TaskRegistry.add(
     "tiny_shakespeare",
     seqio.TfdsDataSource(tfds_name="tiny_shakespeare:1.0.0"),
     preprocessors=[
-        functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text", "decoder_input_ids": None}),
+        functools.partial(preprocessors.rekey, key_map={"inputs": None, "targets": "text"}),
         seqio.preprocessors.tokenize,
         seqio.CacheDatasetPlaceholder(),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
-    metric_fns=[perplexity])
+    metric_fns=[])
 
 seqio.TaskRegistry.add(
     "c4.en",
