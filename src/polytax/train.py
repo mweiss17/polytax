@@ -223,6 +223,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item(), "negative log perplexity": -x_hat.loss.item()})
         # print(f"input: {input}, label: {label}, pred: {pred}")
 
+    def log_times(self, get_data, forward, backward, reduce, sgd_step):
+        self.wandb_log(**{"get_data_time": get_data, "forward_time": forward, "backward_time": backward, "reduce_time": reduce, "sgd_step_time": sgd_step})
+
     def log(self, x, x_hat):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
@@ -236,19 +239,37 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def run(self):
         self.model.train()
-
+        import time
         # Train for N steps until you need to evaluate
         for _ in range(self.get("num_train_steps")):
+            start = time.time()
             x = next(self.train_loader)
+            get_data = time.time() - start
+            start = time.time()
             self.optimizer.zero_grad()
             x_hat = self.model(**x)
+            forward = time.time() - start
+            start = time.time()
+
             x_hat.loss.backward()
+            backward = time.time() - start
+            start = time.time()
+
             self.reduce_gradients()
+            reduce = time.time() - start
+            start = time.time()
+
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
             self.next_step()
             self.tracker.add(self.total_batch_size)
+            sgd_step = time.time() - start
+
             if self.log_now:
                 self.log(x, x_hat)
+                if xla_found:
+                    xm.add_step_closure(
+                        self.log_times,
+                        args=(get_data, forward, backward, reduce, sgd_step))
 
     @property
     def log_now(self):
