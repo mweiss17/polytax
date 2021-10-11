@@ -218,10 +218,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # Get a text example and log it
         input, label, pred = self.decode(x, x_hat)
         accuracy = self.compute_accuracy(x, x_hat)
-        self.table = wandb.Table(columns=["Step", "Input", "Label", "Predicted"])
-        self.samples_table.append((step, input, label, pred))
-        for (step, input, label, pred) in self.samples_table:
-            self.table.add_data(step, input, label, pred)
+        self.table = wandb.Table(columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"])
+        self.samples_table.append((step, accuracy, x_hat.loss.item(), input, label, pred))
+        for (step, accuracy, loss, input, label, pred) in self.samples_table:
+            self.table.add_data(step, accuracy, loss, input, label, pred)
         self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item(), "negative log perplexity": -x_hat.loss.item()})
         # print(f"input: {input}, label: {label}, pred: {pred}")
 
