@@ -14,8 +14,8 @@ tokenizer:
 
 # Dataset and Batch Size
 dataset_name: "tiny_shakespeare"
-max_seq_length: 16
-per_device_train_batch_size: 2
+max_seq_length: 32
+per_device_train_batch_size: 1
 per_device_eval_batch_size: 1
 
 # Optimization

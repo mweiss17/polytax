@@ -72,8 +72,7 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
     def __iter__(self):
         def process_sample(sample):
             sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long),
-                       "labels": torch.tensor(sample["targets"], dtype=torch.long),
-                       "decoder_input_ids": torch.tensor(sample["inputs"], dtype=torch.long)}
+                       "labels": torch.tensor(sample["targets"], dtype=torch.long)}
             return sample
         return map(process_sample, self.seqiotask)
 
@@ -102,9 +101,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         WandBMixin.WANDB_ENTITY = "mweiss10"
         if self.is_master_ordinal and self.get("use_wandb"):
             self.initialize_wandb()
-            columns = ["Step", "Ground Truth Text", "Predicted Text"]
-            self.table = wandb.Table(columns=columns)
-
+            self.samples_table = []
         self._build()
 
     def _build(self):
@@ -140,7 +137,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _build_loaders(self):
         # determine maximum sequence length to use
-        sequence_length = {"inputs": self.get("max_seq_length"), "targets": self.get("max_seq_length"), "decoder_input_ids": self.get("max_seq_length")}
+        sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length") / 4)}
         self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
         train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
@@ -189,17 +186,15 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         #     xm.all_reduce(xm.REDUCE_SUM, zeros)
 
     def decode(self, x, x_hat):
-        one_sample_logits = x_hat.logits[0, :]
-        gt = self.tokenizer.decode(x['input_ids'][0, :].cpu().numpy().tolist())
-        pred = self.tokenizer.decode(one_sample_logits.argmax(axis=1).cpu().numpy().tolist())
-        return gt, pred
+        input = self.tokenizer.decode(x['input_ids'][0, :].cpu().numpy().tolist())
+        label = self.tokenizer.decode(x['labels'][0, :].cpu().numpy().tolist())
+        pred = self.tokenizer.decode(x_hat.logits[0, :].argmax(axis=1).cpu().numpy().tolist())
+        return input, label, pred
 
     def compute_accuracy(self, x, x_hat):
-        correct = 0
-        total_samples = 0
         pred = x_hat.logits.argmax(2)
-        correct += pred.eq(x['input_ids'].view_as(pred)).sum()
-        total_samples += x['input_ids'].size()[1]
+        correct = pred.eq(x['labels'].view_as(pred)).sum()
+        total_samples = x['labels'].size()[1]
 
         accuracy = 100.0 * correct.item() / total_samples
         return accuracy
@@ -221,11 +216,14 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
 
         # Get a text example and log it
-        gt, pred = self.decode(x, x_hat)
+        input, label, pred = self.decode(x, x_hat)
         accuracy = self.compute_accuracy(x, x_hat)
-        self.table.add_data(step, gt, pred)
-        self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item()})
-
+        self.table = wandb.Table(columns=["Step", "Input", "Label", "Predicted"])
+        self.samples_table.append((step, input, label, pred))
+        for (step, input, label, pred) in self.samples_table:
+            self.table.add_data(step, input, label, pred)
+        self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item(), "negative log perplexity": -x_hat.loss.item()})
+        print(f"input: {input}, label: {label}, pred: {pred}")
 
     def log(self, x, x_hat):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
