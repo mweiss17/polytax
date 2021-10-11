@@ -23,6 +23,7 @@ https://huggingface.co/models?filter=t5
 import logging
 import os
 import wandb
+import time
 import numpy as np
 import itertools
 from tensorflow.python.ops.numpy_ops import np_config
@@ -198,12 +199,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return accuracy
 
     def _update_logs(self, step, tracker, x, x_hat):
-        # Returns if we aren't logging to wandb or we're not the master proc
-        if not self.is_master_ordinal or not self.get("use_wandb"):
-            return
 
         # Print to console what's going on
         print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
+
+        # Return if we don't have wandb
+        if not self.get("use_wandb"):
+            return
 
         # Write speeds to wandb
         self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
@@ -239,7 +241,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def run(self):
         self.model.train()
-        import time
+
         # Train for N steps until you need to evaluate
         for _ in range(self.get("num_train_steps")):
             start = time.time()
@@ -256,7 +258,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             start = time.time()
 
             self.reduce_gradients()
-            reduce = time.time() - start
+            reduce_time = time.time() - start
             start = time.time()
 
             xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
@@ -264,12 +266,16 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.tracker.add(self.total_batch_size)
             sgd_step = time.time() - start
 
-            if self.log_now:
+            # We only log from the master process
+            if self.log_now and self.is_master_ordinal:
                 self.log(x, x_hat)
                 if xla_found:
                     xm.add_step_closure(
                         self.log_times,
-                        args=(get_data, forward, backward, reduce, sgd_step))
+                        args=(get_data, forward, backward, reduce_time, sgd_step))
+                else:
+                    self.wandb_log(**{"get_data_time": get_data, "forward_time": forward, "backward_time": backward,
+                                      "reduce_time": reduce_time, "sgd_step_time": sgd_step})
 
     @property
     def log_now(self):
