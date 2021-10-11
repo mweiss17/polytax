@@ -45,6 +45,7 @@ from speedrun import (
     WandBMixin,
     IOMixin,
     SweepRunner,
+    register_default_dispatch,
 )
 
 from polytax import dataset # DO NOT DELETE -- imports seqio datasets
@@ -231,6 +232,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
         return accuracy
 
+    @register_default_dispatch
     def _update_logs(self, step, tracker, x, x_hat, valid_split):
         # Returns if we aren't logging to wandb or we're not the master proc
         if not self.is_master_ordinal or not self.get("use_wandb"):
