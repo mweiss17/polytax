@@ -194,9 +194,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def compute_accuracy(self, x, x_hat):
         pred = x_hat.logits.argmax(2)
         correct = pred.eq(x['labels'].view_as(pred)).sum()
-        total_samples = x['labels'].size()[1]
-
-        accuracy = 100.0 * correct.item() / total_samples
+        accuracy = 100.0 * correct.item() / x['labels'].nelement()
         return accuracy
 
     def _update_logs(self, step, tracker, x, x_hat):
