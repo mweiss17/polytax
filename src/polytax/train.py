@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import logging
 import os
+import sys
 import wandb
 import numpy as np
 import itertools
@@ -38,7 +39,14 @@ from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from mesh_tensorflow.transformer.dataset import pack_or_pad
 import tensorflow as tf
 import seqio
-from speedrun import BaseExperiment, WandBMixin, IOMixin
+from speedrun import (
+    BaseExperiment,
+    WandBSweepMixin,
+    WandBMixin,
+    IOMixin,
+    SweepRunner,
+)
+
 from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 
 import torch
@@ -233,8 +241,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             gt, pred = self.decode(x, x_hat)
             accuracy = self.compute_accuracy(x, x_hat)
             self.table.add_data(step, gt, pred)
-            self.wandb_log(**{"examples": self.table})
-            self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "val_loss": x_hat.loss.item()})
+            valid_loss = x_hat.loss.item()
+            if self.get("use_wandb"):
+                self.wandb_log(**{"examples": self.table})
+                self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "val_loss": valid_loss})
             print_test_update(self.device, accuracy, step)
         else:
             # Logs to stdout
@@ -281,6 +291,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             for _ in range(self.get("num_eval_steps")):
                 x = next(self.eval_loader)
                 x_hat = self.model(**x)
+                valid_loss = x_hat.loss.item()
                 self.log(x, x_hat, valid_split=True)
 
     def run(self):
@@ -316,8 +327,17 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 def _mp_fn(index, args):
     Experiment1().run()
 
+class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
+    def __init__(self):
+        WandBSweepMixin.WANDB_ENTITY = "polytax"
+        WandBSweepMixin.WANDB_PROJECT = "mweiss10"
+        super(SweepPolytax, self).__init__(Experiment1)
+
 if __name__ == '__main__':
-    if xla_found:
-        xmp.spawn(_mp_fn, args=({},), nprocs=8)
+    if "--wandb.sweep" in sys.argv:
+       SweepPolytax.run()
     else:
-        Experiment1().run()
+        if xla_found:
+            xmp.spawn(_mp_fn, args=({},), nprocs=8)
+        else:
+            Experiment1().run()
