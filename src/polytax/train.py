@@ -232,7 +232,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             accuracy = xm.mesh_reduce('val_accuracy', accuracy, np.mean)
         return accuracy
 
-    @register_default_dispatch
     def _update_logs(self, step, tracker, x, x_hat, valid_split):
         # Returns if we aren't logging to wandb or we're not the master proc
         if not self.is_master_ordinal or not self.get("use_wandb"):
@@ -270,7 +269,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         else:
             self._update_logs(self.step, self.tracker, x, x_hat, valid_split)
     @register_default_dispatch
-    def train_loop(self):
+    def trainloop(self):
         self.model.train()
 
         # Train for N steps until you need to evaluate
@@ -285,24 +284,22 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             self.tracker.add(self.total_batch_size)
             if self.log_now:
                 self.log(x, x_hat, valid_split=False)
-    @register_default_dispatch
-    def eval_loop(self):
-        # Run Validation
-        with torch.no_grad():
-            self.model.eval()
-            for _ in range(self.get("num_eval_steps")):
-                x = next(self.eval_loader)
-                x_hat = self.model(**x)
-                valid_loss = x_hat.loss.item()
-                self.log(x, x_hat, valid_split=True)
+
+            # Eval
+            with torch.no_grad():
+                self.model.eval()
+                for _ in range(self.get("num_eval_steps")):
+                    x = next(self.eval_loader)
+                    x_hat = self.model(**x)
+                    valid_loss = x_hat.loss.item()
+                    self.log(x, x_hat, valid_split=True)
 
     def run(self):
         # The number of iterations to run is the number of training steps divided by the evaluation rate
         iterations = int(self.get("num_train_steps") / self.get("eval_every"))
         # Python is function scoped, so in order to not get OOM errors, we put train and valid in separate loops
         for _ in range(iterations):
-            self.train_loop()
-            self.eval_loop()
+            self.trainloop()
 
     @property
     def log_now(self):
