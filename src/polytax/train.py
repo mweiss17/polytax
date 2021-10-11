@@ -204,7 +204,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         accuracy = 100.0 * correct.item() / total_samples
         return accuracy
 
-    def _update_logs(self, step, tracker, x, x_hat, valid_split):
+    def _update_logs(self, step, tracker, x, x_hat):
         # Returns if we aren't logging to wandb or we're not the master proc
         if not self.is_master_ordinal or not self.get("use_wandb"):
             return
@@ -227,7 +227,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.wandb_log(**{"ground_truth": gt, "predicted": pred, "val_accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item()})
 
 
-    def log(self, x, x_hat, valid_split):
+    def log(self, x, x_hat):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
             xm.add_step_closure(
