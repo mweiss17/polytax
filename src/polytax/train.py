@@ -253,7 +253,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             forward = time.time() - start
             start = time.time()
 
-            x_hat.loss.backward()
+            #x_hat.loss.backward()
             backward = time.time() - start
             start = time.time()
 
@@ -267,7 +267,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             sgd_step = time.time() - start
 
             # We only log from the master process
-            if self.log_now and self.is_master_ordinal:
+            if False and self.log_now and self.is_master_ordinal:
                 self.log(x, x_hat)
                 if xla_found:
                     xm.add_step_closure(
