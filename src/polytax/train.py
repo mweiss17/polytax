@@ -331,7 +331,7 @@ class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
         super(SweepPolytax, self).__init__(Experiment1)
 
 if __name__ == '__main__':
-    if "--wandb.sweep_config" in sys.argv:
+    if "--wandb.sweep" in sys.argv:
        SweepPolytax.run()
     else:
         if xla_found:
