@@ -326,13 +326,23 @@ def _mp_fn(index, args):
 
 class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
     def __init__(self):
+        self.auto_setup()
+        super(SweepPolytax, self).__init__(Experiment1, None, sys.argv)
+
+    @register_default_dispatch
+    def __call__(self):
         WandBSweepMixin.WANDB_ENTITY = "polytax"
         WandBSweepMixin.WANDB_PROJECT = "mweiss10"
-        super(SweepPolytax, self).__init__(Experiment1)
+        self.parse_experiment_directory()
+        self.read_config_file()
+        if self.get_arg("wandb.sweep", False):
+            self.update_configuration_from_wandb(dump_configuration=True)
+
+        self.run()
 
 if __name__ == '__main__':
     if "--wandb.sweep" in sys.argv:
-        SweepPolytax.run()
+        SweepPolytax()
     else:
         if xla_found:
             xmp.spawn(_mp_fn, args=({},), nprocs=8)
