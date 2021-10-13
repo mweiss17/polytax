@@ -88,7 +88,7 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
             return sample
         return map(process_sample, self.seqiotask)
 
-class Experiment1(BaseExperiment, WandBMixin, WandBSweepMixin, IOMixin):
+class Experiment1(BaseExperiment, WandBSweepMixin, IOMixin):
     def __init__(self):
         super(Experiment1, self).__init__()
         self.auto_setup()
