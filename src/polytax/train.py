@@ -88,7 +88,7 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
             return sample
         return map(process_sample, self.seqiotask)
 
-class Experiment1(BaseExperiment, WandBMixin, IOMixin):
+class Experiment1(BaseExperiment, WandBMixin, WandBSweepMixin, IOMixin):
     def __init__(self):
         super(Experiment1, self).__init__()
         self.auto_setup()
@@ -332,9 +332,7 @@ class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
 
 if __name__ == '__main__':
     if "--wandb.sweep" in sys.argv:
-        obj = SweepPolytax()
-        obj.run()
-        #SweepPolytax.run()
+        SweepPolytax.run()
     else:
         if xla_found:
             xmp.spawn(_mp_fn, args=({},), nprocs=8)
