@@ -109,8 +109,8 @@ class Experiment1(BaseExperiment, WandBSweepMixin, IOMixin):
         if self.is_multi_host and self.is_master_ordinal:
             dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
 
-        WandBMixin.WANDB_PROJECT = "polytax"
-        WandBMixin.WANDB_ENTITY = "mweiss10"
+        WandBSweepMixin.WANDB_PROJECT = "polytax"
+        WandBSweepMixin.WANDB_ENTITY = "mweiss10"
         if self.is_master_ordinal and self.get("use_wandb"):
             self.initialize_wandb()
             columns = ["Step", "Ground Truth Text", "Predicted Text"]
