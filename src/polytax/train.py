@@ -332,7 +332,7 @@ class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
 
 if __name__ == '__main__':
     if "--wandb.sweep" in sys.argv:
-       SweepPolytax.run()
+        SweepPolytax.run()
     else:
         if xla_found:
             xmp.spawn(_mp_fn, args=({},), nprocs=8)
