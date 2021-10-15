@@ -327,6 +327,7 @@ def _mp_fn(index, args):
 class SweepPolytax(SweepRunner, WandBSweepMixin, IOMixin):
     def __init__(self):
         self.auto_setup()
+        print(">>> Constructor called")
         super(SweepPolytax, self).__init__(Experiment1, None, sys.argv)
 
     @register_default_dispatch
