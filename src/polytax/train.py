@@ -45,6 +45,7 @@ from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
+import torch_xla
 from torch.utils.data import DataLoader
 
 global xla_found
@@ -72,8 +73,11 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         def process_sample(sample):
-            sample = {"input_ids": torch.tensor(sample["inputs"], dtype=torch.long),
-                       "labels": torch.tensor(sample["targets"], dtype=torch.long)}
+            sample = {"input_ids": torch.tensor(sample["encoder_input_tokens"], dtype=torch.long),
+                      "attention_mask": torch.tensor(sample["encoder_segment_ids"], dtype=torch.long),
+                      "decoder_input_ids": torch.tensor(sample["decoder_input_tokens"], dtype=torch.long),
+                      "decoder_attention_mask": torch.tensor(sample["decoder_loss_weights"], dtype=torch.long),
+                      "labels": torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)}
             return sample
         return map(process_sample, self.seqiotask)
 
@@ -83,7 +87,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.auto_setup()
 
         self.device = xm.xla_device() if xla_found else torch.device("cpu")
-
+        print(f"experiment on: {self.device}")
         self.local_world_size = int(xm.xrt_world_size()) if xla_found else 1 # Devices per host
         self.global_world_size = int(os.environ.get("WORLD_SIZE", 1)) # Total number of hosts
         self.local_rank = int(xm.get_ordinal()) if xla_found else 1
@@ -93,7 +97,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.is_multi_host = self.global_world_size > 1
         self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
         print(f"total shards: {self.total_shards}")
-
+        print(f"global rank: {self.global_rank}")
         # one process per host
         if self.is_multi_host and self.is_master_ordinal:
             dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
@@ -139,13 +143,15 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def _build_loaders(self):
         # determine maximum sequence length to use
         sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length")/4)}
-        self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
-        eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
-        train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
+        #self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
+        train_dataset = seqio.get_dataset(self.get("dataset_name"), task_feature_lengths=sequence_length, dataset_split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1, feature_converter=seqio.EncDecFeatureConverter(pack=True))
+
+        #eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
+        #train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
         if self.total_shards > 1:
             train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
-        train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
-                                    ensure_eos=eos_keys, pack=True)
+        #train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
+        #                            ensure_eos=eos_keys, pack=True)
         train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         train_dataset = itertools.cycle(train_dataset)
         train_loader = iter(SeqioWrapperDataset(train_dataset))
@@ -199,9 +205,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return accuracy
 
     def _update_logs(self, step, tracker, x, x_hat):
-
+        print(torch_xla._XLAC._xla_metrics_report())
+        loss = x_hat.loss.detach().item()
         # Print to console what's going on
-        print_training_update(self.device, step, x_hat.loss.item(), tracker.rate(), tracker.global_rate())
+        print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
 
         # Return if we don't have wandb
         if not self.get("use_wandb"):
@@ -211,7 +218,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
 
         # Log gradients TODO I think these are slow, so some are commented
-        self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
+        # self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
         # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
         # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
 
@@ -219,14 +226,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         input, label, pred = self.decode(x, x_hat)
         accuracy = self.compute_accuracy(x, x_hat)
         self.table = wandb.Table(columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"])
-        self.samples_table.append((step, accuracy, x_hat.loss.item(), input, label, pred))
-        for (step, accuracy, loss, input, label, pred) in self.samples_table:
-            self.table.add_data(step, accuracy, loss, input, label, pred)
-        self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": x_hat.loss.item(), "negative log perplexity": -x_hat.loss.item()})
-        # print(f"input: {input}, label: {label}, pred: {pred}")
-
-    def log_times(self, get_data, forward, backward, reduce, sgd_step):
-        self.wandb_log(**{"get_data_time": get_data, "forward_time": forward, "backward_time": backward, "reduce_time": reduce, "sgd_step_time": sgd_step})
+        self.samples_table.append((step, accuracy, loss, input, label, pred))
+        self.table.add_data(step, accuracy, loss, input, label, pred)
+        self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": loss})
 
     def log(self, x, x_hat):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
@@ -243,39 +245,25 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.model.train()
 
         # Train for N steps until you need to evaluate
-        for _ in range(self.get("num_train_steps")):
-            start = time.time()
+        for i in range(self.get("num_train_steps")):
+            
             x = next(self.train_loader)
-            get_data = time.time() - start
-            start = time.time()
             self.optimizer.zero_grad()
+            
             x_hat = self.model(**x)
-            forward = time.time() - start
-            start = time.time()
-
-            #x_hat.loss.backward()
-            backward = time.time() - start
-            start = time.time()
+            x_hat.loss.backward()
 
             self.reduce_gradients()
-            reduce_time = time.time() - start
-            start = time.time()
 
-            xm.optimizer_step(self.optimizer) if xla_found else self.optimizer.step()
+            self.optimizer.step()
             self.next_step()
             self.tracker.add(self.total_batch_size)
-            sgd_step = time.time() - start
 
             # We only log from the master process
-            if False and self.log_now and self.is_master_ordinal:
-                self.log(x, x_hat)
-                if xla_found:
-                    xm.add_step_closure(
-                        self.log_times,
-                        args=(get_data, forward, backward, reduce_time, sgd_step))
-                else:
-                    self.wandb_log(**{"get_data_time": get_data, "forward_time": forward, "backward_time": backward,
-                                      "reduce_time": reduce_time, "sgd_step_time": sgd_step})
+            if self.log_now and self.is_master_ordinal and xla_found:
+                xm.add_step_closure(
+                    self._update_logs,
+                    args=(i, self.tracker, x, x_hat))
 
     @property
     def log_now(self):
