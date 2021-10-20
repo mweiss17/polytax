@@ -31,7 +31,7 @@ adam_beta2: 0.999
 log_every: 1
 save_every: 1
 eval_every: 5
-num_train_steps: 20
+num_train_steps: 200
 num_eval_steps: 1
 
 # Logging

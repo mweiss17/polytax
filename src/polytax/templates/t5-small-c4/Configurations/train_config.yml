@@ -12,8 +12,8 @@ tokenizer:
 # Dataset and Batch Size
 dataset_name: "c4.en"
 max_seq_length: 512
-per_device_train_batch_size: 32
-per_device_eval_batch_size: 32
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 8
 
 # Optimization
 adafactor: "True"
@@ -25,11 +25,11 @@ adam_beta1: 0.9
 adam_beta2: 0.999
 
 # Steps
-log_every: 10
-save_every: 100
-eval_every: 50
+log_every: 100
+save_every: 1000
+eval_every: 100
 num_train_steps: 1000000
-num_eval_steps: 1
+num_eval_steps: 100
 
 # Logging
 use_wandb: True
