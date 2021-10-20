@@ -206,7 +206,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _update_logs(self, step, tracker, x, x_hat):
         print(torch_xla._XLAC._xla_metrics_report())
-        loss = x_hat.loss.detach().item()
+        loss = x_hat.loss.detach() #.item()
         # Print to console what's going on
         print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
 
