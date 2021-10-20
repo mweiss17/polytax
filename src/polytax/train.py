@@ -45,11 +45,11 @@ from polytax import dataset # DO NOT DELETE -- imports seqio datasets
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
-import torch_xla
 from torch.utils.data import DataLoader
 
 global xla_found
 try:
+    from torch_xla._XLAC import _xla_metrics_report
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
     from torch_xla.core.xla_model import RateTracker
@@ -73,11 +73,12 @@ class SeqioWrapperDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         def process_sample(sample):
+            labels = torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)
             sample = {"input_ids": torch.tensor(sample["encoder_input_tokens"], dtype=torch.long),
                       "attention_mask": torch.tensor(sample["encoder_segment_ids"], dtype=torch.long),
                       "decoder_input_ids": torch.tensor(sample["decoder_input_tokens"], dtype=torch.long),
                       "decoder_attention_mask": torch.tensor(sample["decoder_loss_weights"], dtype=torch.long),
-                      "labels": torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)}
+                      "labels": torch.where(labels >= 32000, -100, labels)}
             return sample
         return map(process_sample, self.seqiotask)
 
@@ -145,7 +146,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length")/4)}
         #self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
         train_dataset = seqio.get_dataset(self.get("dataset_name"), task_feature_lengths=sequence_length, dataset_split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1, feature_converter=seqio.EncDecFeatureConverter(pack=True))
-
         #eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
         #train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
         if self.total_shards > 1:
@@ -193,8 +193,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         #     xm.all_reduce(xm.REDUCE_SUM, zeros)
 
     def decode(self, x, x_hat):
+        labels = x['labels'][0, :]
+        # some tokens were -100 for the cross entropy loss
+        labels = torch.where(labels == -100, 32099, labels).cpu().numpy().tolist()
         input = self.tokenizer.decode(x['input_ids'][0, :].cpu().numpy().tolist())
-        label = self.tokenizer.decode(x['labels'][0, :].cpu().numpy().tolist())
+        label = self.tokenizer.decode(labels)
         pred = self.tokenizer.decode(x_hat.logits[0, :].argmax(axis=1).cpu().numpy().tolist())
         return input, label, pred
 
@@ -205,7 +208,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return accuracy
 
     def _update_logs(self, step, tracker, x, x_hat):
-        print(torch_xla._XLAC._xla_metrics_report())
+        if xla_found:
+            print(_xla_metrics_report())
         loss = x_hat.loss.detach() #.item()
         # Print to console what's going on
         print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
@@ -249,7 +253,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             
             x = next(self.train_loader)
             self.optimizer.zero_grad()
-            
+
             x_hat = self.model(**x)
             x_hat.loss.backward()
 
@@ -257,13 +261,15 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
             self.optimizer.step()
             self.next_step()
-            self.tracker.add(self.total_batch_size)
+            self.tracker.add(1)
 
             # We only log from the master process
             if self.log_now and self.is_master_ordinal and xla_found:
                 xm.add_step_closure(
                     self._update_logs,
                     args=(i, self.tracker, x, x_hat))
+            if not xla_found:
+                self._update_logs(i, self.tracker, x, x_hat)
 
     @property
     def log_now(self):
