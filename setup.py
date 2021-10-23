@@ -25,10 +25,10 @@ setuptools.setup(
         'numpy',
         'tensorboardX',
         'tensorflow',
-        'tensorflow_datasets',
+        'tfds-nightly',
         'mesh_tensorflow',
         't5',
-        'seqio==0.0.5',
+        'seqio',
         'clu',
         'tbp-nightly',
         'google-cloud',
@@ -37,8 +37,10 @@ setuptools.setup(
         'dill',
         'torch_lr_scheduler',
         'speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@master#egg=speedrun',
-        'transformers @ git+https://git@github.com/mweiss17/transformers@master#egg=transformers',
-        'torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl'
+        'transformers @ git+https://github.com/Arka161/transformers@master#egg=transformers',
         ],
+    extra_requires={
+        "xla": 'torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl'
+    }
 )
 

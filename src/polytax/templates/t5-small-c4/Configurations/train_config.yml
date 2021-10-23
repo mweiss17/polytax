@@ -26,7 +26,7 @@ adam_beta2: 0.999
 
 # Steps
 log_every: 100
-save_every: 1000
+checkpoint_every: 1000
 eval_every: 100
 num_train_steps: 1000000
 num_eval_steps: 100

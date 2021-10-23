@@ -20,7 +20,6 @@ Here is the full list of checkpoints on the hub that can be pretrained by this s
 https://huggingface.co/models?filter=t5
 """
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
-import logging
 import os
 import wandb
 import time
@@ -30,26 +29,20 @@ from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
 from transformers import (
     CONFIG_MAPPING,
-    AutoTokenizer,
     T5ForConditionalGeneration,
     T5Config,
     set_seed,
 )
-from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
-from mesh_tensorflow.transformer.dataset import pack_or_pad
-import tensorflow as tf
-import seqio
 from speedrun import BaseExperiment, WandBMixin, IOMixin
-from polytax import dataset # DO NOT DELETE -- imports seqio datasets
-
+from polytax.data.utils import get_mixture_or_task
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
-from torch.utils.data import DataLoader
+from t5.data.utils import get_default_vocabulary
 
 global xla_found
 try:
-    from torch_xla._XLAC import _xla_metrics_report
+    import torch_xla
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
     from torch_xla.core.xla_model import RateTracker
@@ -66,48 +59,26 @@ except Exception as e:
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
 
-class SeqioWrapperDataset(torch.utils.data.IterableDataset):
-    # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset
-    def __init__(self, seqiotask):
-        self.seqiotask = seqiotask
-
-    def __iter__(self):
-        def process_sample(sample):
-            labels = torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)
-            sample = {"input_ids": torch.tensor(sample["encoder_input_tokens"], dtype=torch.long),
-                      "attention_mask": torch.tensor(sample["encoder_segment_ids"], dtype=torch.long),
-                      "decoder_input_ids": torch.tensor(sample["decoder_input_tokens"], dtype=torch.long),
-                      "decoder_attention_mask": torch.tensor(sample["decoder_loss_weights"], dtype=torch.long),
-                      "labels": torch.where(labels >= 32000, -100, labels)}
-            return sample
-        return map(process_sample, self.seqiotask)
-
 class Experiment1(BaseExperiment, WandBMixin, IOMixin):
+    WANDB_PROJECT = "polytax"
+    WANDB_ENTITY = "mweiss10"
+
     def __init__(self):
         super(Experiment1, self).__init__()
         self.auto_setup()
 
         self.device = xm.xla_device() if xla_found else torch.device("cpu")
-        print(f"experiment on: {self.device}")
         self.local_world_size = int(xm.xrt_world_size()) if xla_found else 1 # Devices per host
         self.global_world_size = int(os.environ.get("WORLD_SIZE", 1)) # Total number of hosts
-        self.local_rank = int(xm.get_ordinal()) if xla_found else 1
+        self.local_rank = int(xm.get_ordinal()) if xla_found else 0
         self.global_rank = int(os.environ.get("RANK", 0)) * self.local_world_size + self.local_rank
 
-        self.total_shards = self.global_world_size * self.local_world_size
+        self.num_shards = self.global_world_size * self.local_world_size
         self.is_multi_host = self.global_world_size > 1
         self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
-        print(f"total shards: {self.total_shards}")
+        print(f"total shards: {self.num_shards}")
         print(f"global rank: {self.global_rank}")
-        # one process per host
-        if self.is_multi_host and self.is_master_ordinal:
-            dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
 
-        WandBMixin.WANDB_PROJECT = "polytax"
-        WandBMixin.WANDB_ENTITY = "mweiss10"
-        if self.is_master_ordinal and self.get("use_wandb"):
-            self.initialize_wandb()
-            self.samples_table = []
         self._build()
 
     def _build(self):
@@ -116,7 +87,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         set_seed(self.seed)  # handles random seed setting for everything but XLA
         self.cache_dir = self.get("cache_dir")
         self.model_type = self.get("model_type")
-        self.tokenizer = dataset.get_default_vocabulary()
+        self.tokenizer = get_default_vocabulary()
         self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
         self.train_batch_size = int(self.get("per_device_train_batch_size"))
         self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
@@ -126,8 +97,9 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # Build the data loaders
         self.train_loader = self._build_loaders()
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
+        self.model.train()
 
-        # No need to specify Learning Rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
+        # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optimizer = Adafactor(
             self.model.parameters(),
             eps=(1e-30, 1e-3),
@@ -140,27 +112,39 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             warmup_init=True
         )
 
+        # one process per host
+        if self.is_multi_host and self.is_master_ordinal:
+            dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
+
+        if self.is_master_ordinal and self.get("use_wandb"):
+            self.initialize_wandb()
 
     def _build_loaders(self):
         # determine maximum sequence length to use
-        sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length")/4)}
-        #self.task = seqio.get_mixture_or_task(self.get("dataset_name"))
-        train_dataset = seqio.get_dataset(self.get("dataset_name"), task_feature_lengths=sequence_length, dataset_split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1, feature_converter=seqio.EncDecFeatureConverter(pack=True))
-        #eos_keys = set(k for k, f in self.task.output_features.items() if f.add_eos)
-        #train_dataset = self.task.get_dataset(sequence_length=sequence_length, split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1)
-        if self.total_shards > 1:
-            train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
-        #train_dataset = pack_or_pad(train_dataset, sequence_length, feature_keys=self.task.output_features,
-        #                            ensure_eos=eos_keys, pack=True)
-        train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        train_dataset = itertools.cycle(train_dataset)
-        train_loader = iter(SeqioWrapperDataset(train_dataset))
-
+        sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length") / 4)}
+        train_loader = get_mixture_or_task(self.get("dataset_name"), self.seed, sequence_length, self.num_shards, self.global_rank, self.train_batch_size)
         if xla_found:
             train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
 
         return train_loader
 
+    # def _build_loaders(self):
+    #     # determine maximum sequence length to use
+    #     sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length")/4)}
+    #     train_dataset = seqio.get_dataset(self.get("dataset_name"), task_feature_lengths=sequence_length, dataset_split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1, feature_converter=seqio.EncDecFeatureConverter(pack=True))
+    #
+    #     if self.total_shards > 1:
+    #         train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
+    #
+    #     train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+    #     train_dataset = itertools.cycle(train_dataset)
+    #     train_loader = iter(data.SeqioWrapperDataset(train_dataset))
+    #
+    #     if xla_found:
+    #         train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
+    #
+    #     return train_loader
+    #
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
             model_config = T5Config.from_pretrained(model_name_or_path)
@@ -192,14 +176,32 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         #     zeros = torch.zeros_like(param.grad)
         #     xm.all_reduce(xm.REDUCE_SUM, zeros)
 
+
     def decode(self, x, x_hat):
-        labels = x['labels'][0, :]
-        # some tokens were -100 for the cross entropy loss
-        labels = torch.where(labels == -100, 32099, labels).cpu().numpy().tolist()
-        input = self.tokenizer.decode(x['input_ids'][0, :].cpu().numpy().tolist())
+        sample_id = 1
+        labels = x['labels'][sample_id].cpu().numpy().tolist()
+        input_ids = x['input_ids'][sample_id].cpu().numpy().tolist()
+        preds = x_hat.logits[sample_id].argmax(axis=1).cpu().numpy().tolist()
+
+        # Prepare to decode the labels
+        extra_id = 32099
+        ids_to_replace_in_preds = []
+        for idx, label in enumerate(labels):
+            if label == -100:
+                ids_to_replace_in_preds.append(idx)
+                labels[idx] = extra_id
+                extra_id -= 1
+
+        extra_id = 32099
+        for idx, pred in enumerate(preds):
+            if idx in ids_to_replace_in_preds:
+                preds[idx] = extra_id
+                extra_id -= 1
+
+        input = self.tokenizer.decode(input_ids)
         label = self.tokenizer.decode(labels)
-        pred = self.tokenizer.decode(x_hat.logits[0, :].argmax(axis=1).cpu().numpy().tolist())
-        return input, label, pred
+        preds = self.tokenizer.decode(preds)
+        return input, label, preds
 
     def compute_accuracy(self, x, x_hat):
         pred = x_hat.logits.argmax(2)
@@ -207,11 +209,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         accuracy = 100.0 * correct.item() / x['labels'].nelement()
         return accuracy
 
-    def _update_logs(self, step, tracker, x, x_hat):
+    def _log(self, step, tracker, x, x_hat):
         if xla_found:
-            print(_xla_metrics_report())
+            print(torch_xla._XLAC_xla_metrics_report())
         loss = x_hat.loss.detach() #.item()
-        # Print to console what's going on
+
+        # Print to console
         print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
 
         # Return if we don't have wandb
@@ -221,16 +224,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # Write speeds to wandb
         self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
 
-        # Log gradients TODO I think these are slow, so some are commented
-        # self.wandb_watch(self.model.shared, x_hat.loss.item(), log_freq=10)
-        # self.wandb_watch(self.model.decoder.embed_tokens, x_hat.loss.item(), log_freq=1)
-        # self.wandb_watch(self.model.lm_head, x_hat.loss.item(), log_freq=1)
-
         # Get a text example and log it
         input, label, pred = self.decode(x, x_hat)
         accuracy = self.compute_accuracy(x, x_hat)
         self.table = wandb.Table(columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"])
-        self.samples_table.append((step, accuracy, loss, input, label, pred))
         self.table.add_data(step, accuracy, loss, input, label, pred)
         self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": loss})
 
@@ -238,55 +235,55 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
             xm.add_step_closure(
-                self._update_logs,
+                self._log,
                 args=(self.step, self.tracker, x, x_hat))
 
         # Otherwise just call the function to log directly
         else:
-            self._update_logs(self.step, self.tracker, x, x_hat)
+            self._log(self.step, self.tracker, x, x_hat)
 
     def run(self):
-        self.model.train()
 
-        # Train for N steps until you need to evaluate
         for i in range(self.get("num_train_steps")):
-            
+
+            # Get data
             x = next(self.train_loader)
+
+            # Forward model
+            x_hat = self.model(**x)
+
+            # Optimization
+            x_hat.loss.backward()
+            self.reduce_gradients()
+            self.optimizer.step()
             self.optimizer.zero_grad()
 
-            x_hat = self.model(**x)
-            x_hat.loss.backward()
-
-            self.reduce_gradients()
-
-            self.optimizer.step()
+            # Increment step count
             self.next_step()
             self.tracker.add(1)
 
-            # We only log from the master process
-            if self.log_now and self.is_master_ordinal and xla_found:
-                xm.add_step_closure(
-                    self._update_logs,
-                    args=(i, self.tracker, x, x_hat))
-            if not xla_found:
-                self._update_logs(i, self.tracker, x, x_hat)
+            if self.log_now:
+                self.log(x, x_hat)
+
+            if self.checkpoint_now:
+                self.checkpoint()
 
     @property
     def log_now(self):
-        return self.step % self.get("log_every") == 0 and self.step > 0
+        return self.step % self.get("log_every") == 0 and self.step > 0 and self.is_master_ordinal
 
     @property
     def evaluate_now(self):
         return self.step % self.get("eval_every") == 0 and self.step > 0
 
     @property
-    def save_now(self):
-        return self.step % self.get("save_every") == 0 and self.step > 0
+    def checkpoint_now(self):
+        return self.step % self.get("checkpoint_every") == 0 and self.step > 0
 
     def checkpoint(self):
-        if not self.save_now:
-            return
         checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+        print(f"checkpointing the model to {checkpoint_path}")
+
         if xla_found:
             xm.save(self.model.state_dict(), checkpoint_path)
         else:

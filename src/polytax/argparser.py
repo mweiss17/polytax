@@ -37,7 +37,7 @@ from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 from mesh_tensorflow.transformer.dataset import pack_or_pad
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import polytax.dataset as datasets
+import polytax.data as datasets
 import seqio
 
 def get_args():
