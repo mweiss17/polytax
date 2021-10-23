@@ -211,7 +211,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def _log(self, step, tracker, x, x_hat):
         if xla_found:
-            print(torch_xla._XLAC_xla_metrics_report())
+            print(torch_xla._XLAC.xla_metrics_report())
         loss = x_hat.loss.detach() #.item()
 
         # Print to console
