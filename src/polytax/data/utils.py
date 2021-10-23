@@ -4,11 +4,12 @@ import t5.data.mixtures # pylint: disable=unused-import
 import seqio
 import tensorflow as tf
 import itertools
+import tensorflow_datasets as tfds
 from polytax.data.dataset import SeqioWrapperDataset
 
-def get_mixture_or_task(dataset_name, seed, sequence_length, num_shards, shard_index, batch_size):
+def get_mixture_or_task(dataset_name, seed, sequence_length, num_shards, shard_index, batch_size, dataset_split=tfds.Split.TRAIN):
     train_dataset = seqio.get_dataset(dataset_name, task_feature_lengths=sequence_length,
-                                      dataset_split="test", use_cached=False, shuffle=True, seed=seed,
+                                      dataset_split=dataset_split, use_cached=False, shuffle=True, seed=seed,
                                       num_epochs=1, feature_converter=seqio.EncDecFeatureConverter(pack=True))
     train_dataset = train_dataset.shard(num_shards=num_shards, index=shard_index)
 
