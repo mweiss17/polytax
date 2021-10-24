@@ -35,6 +35,7 @@ from transformers import (
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin
 from polytax.data.utils import get_mixture_or_task
+from polytax.utils.utils import _upload_blob_gcs, _read_blob_gcs
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
@@ -45,13 +46,14 @@ try:
     import torch_xla
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_model as xm
-    from torch_xla.core.xla_model import RateTracker
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
     import torch_xla.test.test_utils as test_utils
-    from torch_xla.test.test_utils import print_training_update, print_test_update
     import torch_xla.distributed.xla_multiprocessing as xmp
     import torch_xla.core.xla_env_vars as xenv
+    from torch_xla.utils import gcsfs
+    from torch_xla.core.xla_model import RateTracker
+    from torch_xla.test.test_utils import print_training_update, print_test_update
     xla_found = True
 except Exception as e:
     print(f"XLA not found {e} \n")
@@ -238,7 +240,8 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             # Forward model
             x_hat = self.model(**x)
 
-            # Optimization
+            # Optimization    def checkpoint(self):
+
             x_hat.loss.backward()
             if (step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
                 self.reduce_gradients()
@@ -267,19 +270,22 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def checkpoint_now(self):
         return self.step % self.get("checkpoint_every") == 0 and self.step > 0
 
-    def checkpoint(self):
-        if xla_found:
-            checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
-        else:
-            checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+    def save_checkpoint(self):
         data = {"model": self.model.state_dict(), "optim": self.optimizer.state_dict()}
 
-        print(f"checkpointing the model to {checkpoint_path}")
-
         if xla_found:
-            xm.save(data, checkpoint_path)
+            local_checkpoint_path = f"/tmp/checkpoint.pt"
+            gcs_checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
+            print(f"checkpointing the model to {gcs_checkpoint_path}")
+            xm.save(data, local_checkpoint_path)
+            if self.is_master_ordinal:
+                _upload_blob_gcs(local_checkpoint_path, gcs_checkpoint_path)
         else:
+            checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+            print(f"checkpointing the model to {checkpoint_path}")
             torch.save(data, checkpoint_path)
+
+
 
 
 def _mp_fn(index, args):
