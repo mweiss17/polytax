@@ -40,8 +40,8 @@ setuptools.setup(
         'speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@dev#egg=speedrun',
         'transformers @ git+https://github.com/Arka161/transformers@master#egg=transformers',
         ],
-    extra_requires={
-        "xla": 'torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl'
+    extras_require={
+        "xla": ['torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl'],
     }
 )
 

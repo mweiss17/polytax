@@ -8,7 +8,7 @@ templatename=$4
 echo rank: $rank, addr: $addr, experiment_name: $expname, template_name: $templatename
 
 cd ~/polytax/
-pip3 install -e . # for some reason this fails if we python3 setup.py install --user
+pip3 install -e .[xla] # for some reason this fails if we python3 setup.py install --user
 
 cd ~/polytax/src/polytax
 export WANDB_API_KEY=$(curl "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key" -H "Metadata-Flavor: Google")
