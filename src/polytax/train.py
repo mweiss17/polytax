@@ -268,7 +268,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return self.step % self.get("checkpoint_every") == 0 and self.step > 0
 
     def checkpoint(self):
-        checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+        if xla_found:
+            checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
+        else:
+            checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
         data = {"model": self.model.state_dict(), "optim": self.optimizer.state_dict()}
 
         print(f"checkpointing the model to {checkpoint_path}")
