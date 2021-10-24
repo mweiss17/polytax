@@ -23,7 +23,7 @@ warmup_steps: 2000
 dtype: "float32"
 adam_beta1: 0.9
 adam_beta2: 0.999
-gradient_accumulation_steps: 1
+gradient_accumulation_steps: 2
 
 # Steps
 log_every: 10
