@@ -270,13 +270,12 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def save_checkpoint(self):
         data = {"model": self.model.state_dict(), "optim": self.optimizer.state_dict()}
 
-        if xla_found:
+        if xla_found and self.is_master_ordinal:
             local_checkpoint_path = f"/tmp/checkpoint.pt"
             gcs_checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
             print(f"checkpointing the model to {gcs_checkpoint_path}")
             xm.save(data, local_checkpoint_path)
-            if self.is_master_ordinal:
-                _upload_blob_gcs(local_checkpoint_path, gcs_checkpoint_path)
+            _upload_blob_gcs(local_checkpoint_path, gcs_checkpoint_path)
         else:
             checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
             print(f"checkpointing the model to {checkpoint_path}")
