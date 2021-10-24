@@ -112,6 +112,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             warmup_init=True
         )
 
+        if self.get("checkpoint_path"):
+            checkpoint_data = torch.load(self.get("checkpoint_path"))
+            self.model.load_state_dict(checkpoint_data["model"])
+            self.optimizer.load_state_dict(checkpoint_data["optim"])
+
         # one process per host
         if self.is_multi_host and self.is_master_ordinal:
             dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
@@ -128,23 +133,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
         return train_loader
 
-    # def _build_loaders(self):
-    #     # determine maximum sequence length to use
-    #     sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length")/4)}
-    #     train_dataset = seqio.get_dataset(self.get("dataset_name"), task_feature_lengths=sequence_length, dataset_split="train", use_cached=False, shuffle=True, seed=self.seed, num_epochs=1, feature_converter=seqio.EncDecFeatureConverter(pack=True))
-    #
-    #     if self.total_shards > 1:
-    #         train_dataset = train_dataset.shard(num_shards=self.total_shards, index=self.global_rank)
-    #
-    #     train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-    #     train_dataset = itertools.cycle(train_dataset)
-    #     train_loader = iter(data.SeqioWrapperDataset(train_dataset))
-    #
-    #     if xla_found:
-    #         train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
-    #
-    #     return train_loader
-    #
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
             model_config = T5Config.from_pretrained(model_name_or_path)
@@ -177,42 +165,43 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         #     xm.all_reduce(xm.REDUCE_SUM, zeros)
 
 
-    def decode(self, x, x_hat):
+    def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 1
-        labels = x['labels'][sample_id].cpu().numpy().tolist()
+        labels = x['labels'][sample_id]
+        labels_list = labels.cpu().numpy().tolist()
         input_ids = x['input_ids'][sample_id].cpu().numpy().tolist()
-        preds = x_hat.logits[sample_id].argmax(axis=1).cpu().numpy().tolist()
+        preds = x_hat.logits[sample_id].argmax(axis=1)
+        preds_list = preds.cpu().numpy().tolist()
+
+        # compute_accuracy
+        correct = preds.eq(labels.view_as(preds)).sum()
+        num_extra_ids = (labels == -100).sum()
+        accuracy = 100.0 * correct / (labels.nelement() - num_extra_ids)
 
         # Prepare to decode the labels
         extra_id = 32099
         ids_to_replace_in_preds = []
-        for idx, label in enumerate(labels):
+        for idx, label in enumerate(labels_list):
             if label == -100:
                 ids_to_replace_in_preds.append(idx)
-                labels[idx] = extra_id
+                labels_list[idx] = extra_id
                 extra_id -= 1
 
         extra_id = 32099
-        for idx, pred in enumerate(preds):
+        for idx, pred in enumerate(preds_list):
             if idx in ids_to_replace_in_preds:
-                preds[idx] = extra_id
+                preds_list[idx] = extra_id
                 extra_id -= 1
 
         input = self.tokenizer.decode(input_ids)
-        label = self.tokenizer.decode(labels)
-        preds = self.tokenizer.decode(preds)
-        return input, label, preds
-
-    def compute_accuracy(self, x, x_hat):
-        pred = x_hat.logits.argmax(2)
-        correct = pred.eq(x['labels'].view_as(pred)).sum()
-        accuracy = 100.0 * correct.item() / x['labels'].nelement()
-        return accuracy
+        labels = self.tokenizer.decode(labels_list)
+        preds = self.tokenizer.decode(preds_list)
+        return input, labels, preds, accuracy
 
     def _log(self, step, tracker, x, x_hat):
         # if xla_found:
         #     print(torch_xla._XLAC.xla_metrics_report())
-        loss = x_hat.loss.detach() #.item()
+        loss = x_hat.loss.detach()
 
         # Print to console
         print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
@@ -225,11 +214,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
 
         # Get a text example and log it
-        input, label, pred = self.decode(x, x_hat)
-        accuracy = self.compute_accuracy(x, x_hat)
+        input, label, pred, accuracy= self.decode_and_compute_accuracy(x, x_hat)
         self.table = wandb.Table(columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"])
         self.table.add_data(step, accuracy, loss, input, label, pred)
-        self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": loss})
+        self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": loss, "num_tokens": self.get("max_seq_length") * self.total_batch_size * self.step})
 
     def log(self, x, x_hat):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
@@ -244,7 +232,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def run(self):
 
-        for i in range(self.get("num_train_steps")):
+        for step in range(self.get("num_train_steps")):
 
             # Get data
             x = next(self.train_loader)
@@ -254,9 +242,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
             # Optimization
             x_hat.loss.backward()
-            self.reduce_gradients()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+            if (step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
+                self.reduce_gradients()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
 
             # Increment step count
             self.next_step()
@@ -282,12 +271,14 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
     def checkpoint(self):
         checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+        data = {"model": self.model.state_dict(), "optim": self.optimizer.state_dict()}
+
         print(f"checkpointing the model to {checkpoint_path}")
 
         if xla_found:
-            xm.save(self.model.state_dict(), checkpoint_path)
+            xm.save(data, checkpoint_path)
         else:
-            torch.save(self.model.state_dict(), checkpoint_path)
+            torch.save(data, checkpoint_path)
 
 
 def _mp_fn(index, args):
