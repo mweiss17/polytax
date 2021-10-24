@@ -115,9 +115,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         )
 
         if self.get("checkpoint_path"):
-            checkpoint_data = torch.load(self.get("checkpoint_path"))
-            self.model.load_state_dict(checkpoint_data["model"])
-            self.optimizer.load_state_dict(checkpoint_data["optim"])
+            self.load_checkpoint()
 
         # one process per host
         if self.is_multi_host and self.is_master_ordinal:
@@ -240,8 +238,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             # Forward model
             x_hat = self.model(**x)
 
-            # Optimization    def checkpoint(self):
-
+            # Optimization
             x_hat.loss.backward()
             if (step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
                 self.reduce_gradients()
@@ -256,7 +253,7 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
                 self.log(x, x_hat)
 
             if self.checkpoint_now:
-                self.checkpoint()
+                self.save_checkpoint()
 
     @property
     def log_now(self):
@@ -285,7 +282,13 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
             print(f"checkpointing the model to {checkpoint_path}")
             torch.save(data, checkpoint_path)
 
-
+    def load_checkpoint(self):
+        if xla_found:
+            checkpoint_data = xm.load(self.get("checkpoint_path"))
+        else:
+            checkpoint_data = torch.load(self.get("checkpoint_path"))
+        self.model.load_state_dict(checkpoint_data["model"])
+        self.optimizer.load_state_dict(checkpoint_data["optim"])
 
 
 def _mp_fn(index, args):

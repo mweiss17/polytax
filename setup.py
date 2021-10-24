@@ -35,6 +35,7 @@ setuptools.setup(
         'wandb',
         'tensorboardX',
         'dill',
+        'google-cloud-storage',
         'torch_lr_scheduler',
         'speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@dev#egg=speedrun',
         'transformers @ git+https://github.com/Arka161/transformers@master#egg=transformers',
