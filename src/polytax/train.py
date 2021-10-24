@@ -199,8 +199,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         return input, labels, preds, accuracy
 
     def _log(self, step, tracker, x, x_hat):
-        # if xla_found:
-        #     print(torch_xla._XLAC.xla_metrics_report())
         loss = x_hat.loss.detach()
 
         # Print to console
