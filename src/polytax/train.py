@@ -34,7 +34,7 @@ from transformers import (
     set_seed,
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin
-from polytax.data.utils import get_mixture_or_task
+from polytax.data.utils import get_train_dataset
 from polytax.utils.utils import _upload_blob_gcs, _read_blob_gcs
 import torch
 import torch.distributed as dist
@@ -61,12 +61,12 @@ except Exception as e:
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
 
-class Experiment1(BaseExperiment, WandBMixin, IOMixin):
+class Trainer(BaseExperiment, WandBMixin, IOMixin):
     WANDB_PROJECT = "polytax"
     WANDB_ENTITY = "mweiss10"
 
     def __init__(self):
-        super(Experiment1, self).__init__()
+        super(Trainer, self).__init__()
         self.auto_setup()
 
         self.device = xm.xla_device() if xla_found else torch.device("cpu")
@@ -80,7 +80,6 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
         print(f"total shards: {self.num_shards}")
         print(f"global rank: {self.global_rank}")
-
         self._build()
 
     def _build(self):
@@ -97,7 +96,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         self.tracker = RateTracker()
 
         # Build the data loaders
-        self.train_loader = self._build_loaders()
+        self.tasks = self._build_tasks()
+        if xla_found:
+            self.train_loader = iter(pl.MpDeviceLoader(iter(self.tasks), self.device))
+        else:
+            self.train_loader = iter(self.tasks)
         self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
         self.model.train()
 
@@ -124,14 +127,11 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
         if self.is_master_ordinal and self.get("use_wandb"):
             self.initialize_wandb()
 
-    def _build_loaders(self):
+    def _build_tasks(self):
         # determine maximum sequence length to use
         sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length") / 4)}
-        train_loader = get_mixture_or_task(self.get("dataset_name"), self.seed, sequence_length, self.num_shards, self.global_rank, self.train_batch_size)
-        if xla_found:
-            train_loader = iter(pl.MpDeviceLoader(train_loader, self.device))
-
-        return train_loader
+        dataloader = get_train_dataset(self.get("dataset_name"), self.seed, sequence_length, self.num_shards, self.global_rank, self.train_batch_size)
+        return dataloader
 
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
@@ -291,10 +291,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
 
 def _mp_fn(index, args):
-    Experiment1().run()
+    Trainer().run()
 
 if __name__ == '__main__':
     if xla_found:
         xmp.spawn(_mp_fn, args=({},), nprocs=8)
     else:
-        Experiment1().run()
+        Trainer().run()
