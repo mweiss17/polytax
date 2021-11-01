@@ -1,5 +1,4 @@
 # Model and Paths
-model_type: "t5-small"
 cache_dir: "/tmp/"
 seed: 12345
 

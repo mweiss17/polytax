@@ -30,7 +30,9 @@ np_config.enable_numpy_behavior()
 from transformers import (
     CONFIG_MAPPING,
     T5ForConditionalGeneration,
+    SwitchForConditionalGeneration,
     T5Config,
+    SwitchConfig,
     set_seed,
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin
@@ -98,7 +100,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
 
         # Build the data loaders
         self.train_loader = self._build_loaders()
-        self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
+        if "switch" in self.model_config.model_type:
+            self.model = SwitchForConditionalGeneration(self.model_config).to(self.device)
+        else:
+            self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
         self.model.train()
 
         # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
@@ -136,7 +141,10 @@ class Experiment1(BaseExperiment, WandBMixin, IOMixin):
     def get_model_config(self, model_config=None, model_name_or_path=None):
         if model_name_or_path: # if we're loading an already trained model
             model_config = T5Config.from_pretrained(model_name_or_path)
-        elif type(model_config) == dict: # pass it in directly from yaml
+        elif type(model_config) == dict and "switch" in model_config.get("model_type"):  # pass it in directly from yaml
+            model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
+            model_config = SwitchConfig.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=self.tokenizer.vocab_size)
+        elif type(model_config) == dict and "t5" in model_config.model_type:  # pass it in directly from yaml
             model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
             model_config = T5Config.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=self.tokenizer.vocab_size)
         elif model_config:
