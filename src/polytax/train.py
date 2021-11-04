@@ -35,7 +35,7 @@ from transformers import (
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin
 from polytax.data.utils import get_train_dataset
-from polytax.utils.utils import _upload_blob_gcs, _read_blob_gcs
+from polytax.utils.utils import _upload_blob_gcs, reduce_gradients
 import torch
 import torch.distributed as dist
 from transformers.optimization import Adafactor
@@ -69,41 +69,84 @@ class Trainer(BaseExperiment, WandBMixin, IOMixin):
         super(Trainer, self).__init__()
         self.auto_setup()
 
-        self.device = xm.xla_device() if xla_found else torch.device("cpu")
-        self.local_world_size = int(xm.xrt_world_size()) if xla_found else 1 # Devices per host
-        self.global_world_size = int(os.environ.get("WORLD_SIZE", 1)) # Total number of hosts
-        self.local_rank = int(xm.get_ordinal()) if xla_found else 0
-        self.global_rank = int(os.environ.get("RANK", 0)) * self.local_world_size + self.local_rank
-
-        self.num_shards = self.global_world_size * self.local_world_size
-        self.is_multi_host = self.global_world_size > 1
-        self.is_master_ordinal = xm.is_master_ordinal() if xla_found else True
-        print(f"total shards: {self.num_shards}")
-        print(f"global rank: {self.global_rank}")
-        self._build()
-
-    def _build(self):
         print(f"{self._config}")
-        self.seed = self.get("seed", 1)
-        set_seed(self.seed)  # handles random seed setting for everything but XLA
-        self.cache_dir = self.get("cache_dir")
-        self.model_type = self.get("model_type")
-        self.tokenizer = get_default_vocabulary()
-        self.model_config = self.get_model_config(self.get("model_config"), self.get("model_name_or_path"))
-        self.train_batch_size = int(self.get("per_device_train_batch_size"))
-        self.eval_batch_size = int(self.get("per_device_eval_batch_size"))
-        self.total_batch_size = self.train_batch_size * self.local_world_size * self.global_world_size
-        self.tracker = RateTracker()
+        set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
-        # Build the data loaders
-        self.tasks = self._build_tasks()
-        if xla_found:
-            self.train_loader = iter(pl.MpDeviceLoader(iter(self.tasks), self.device))
+        self._build_tasks()
+        self._build_model()
+        self._build_optimizer()
+
+        if self.get("checkpoint_path"):
+            self.load_checkpoint()
+
+        if self.is_multi_host and self.is_master_ordinal:
+            dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
+
+        if self.is_master_ordinal and self.get("use_wandb"):
+            self.initialize_wandb()
+
+    @property
+    def device(self):
+        return xm.xla_device() if xla_found else torch.device("cpu")
+
+    @property
+    def local_world_size(self):
+        return int(xm.xrt_world_size()) if xla_found else 1  # Devices per host
+
+    @property
+    def global_world_size(self):
+        return int(os.environ.get("WORLD_SIZE", 1))  # Total number of hosts
+
+    @property
+    def global_rank(self):
+        return int(os.environ.get("RANK", 0)) * self.local_world_size + self.local_rank
+
+    @property
+    def local_rank(self):
+        return int(xm.get_ordinal()) if xla_found else 0
+
+    @property
+    def is_master_ordinal(self):
+        return xm.is_master_ordinal() if xla_found else True
+
+    @property
+    def num_shards(self):
+        return self.global_world_size * self.local_world_size
+
+    @property
+    def is_multi_host(self):
+        return self.local_world_size > 1
+
+    @property
+    def total_batch_size(self):
+        return self.get("per_device_train_batch_size") * self.local_world_size * self.global_world_size
+
+    @property
+    def evaluate_now(self):
+        return self.step % self.get("eval_every") == 0 and self.step > 0
+
+    @property
+    def checkpoint_now(self):
+        return self.step % self.get("training/checkpoint_every") == 0 and self.step > 0
+
+    def _build_model(self):
+        self.tokenizer = get_default_vocabulary()
+        model_config = self.get("model_config")
+        if self.get("model_name_or_path"): # if we're loading an already trained model
+            model_config = T5Config.from_pretrained(self.get("model_name_or_path"))
+        elif type(model_config) == dict: # pass it in directly from yaml
+            model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
+            model_config = T5Config.from_dict(model_config, cache_dir=self.get("cache_dir"), vocab_size=self.tokenizer.vocab_size)
+        elif model_config:
+            model_config = T5Config.from_pretrained(
+                model_config, cache_dir=self.get("cache_dir"), vocab_size=self.tokenizer.vocab_size
+            )
         else:
-            self.train_loader = iter(self.tasks)
-        self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
+            model_config = CONFIG_MAPPING[self.get("model_type")]()
+        self.model = T5ForConditionalGeneration(model_config).to(self.device)
         self.model.train()
 
+    def _build_optimizer(self):
         # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optimizer = Adafactor(
             self.model.parameters(),
@@ -117,53 +160,37 @@ class Trainer(BaseExperiment, WandBMixin, IOMixin):
             warmup_init=True
         )
 
-        if self.get("checkpoint_path"):
-            self.load_checkpoint()
-
-        # one process per host
-        if self.is_multi_host and self.is_master_ordinal:
-            dist.init_process_group(backend="GLOO") #GLOO for CPU comms, which this is.
-
-        if self.is_master_ordinal and self.get("use_wandb"):
-            self.initialize_wandb()
-
     def _build_tasks(self):
         # determine maximum sequence length to use
         sequence_length = {"inputs": self.get("max_seq_length"), "targets": int(self.get("max_seq_length") / 4)}
-        dataloader = get_train_dataset(self.get("dataset_name"), self.seed, sequence_length, self.num_shards, self.global_rank, self.train_batch_size)
-        return dataloader
-
-    def get_model_config(self, model_config=None, model_name_or_path=None):
-        if model_name_or_path: # if we're loading an already trained model
-            model_config = T5Config.from_pretrained(model_name_or_path)
-        elif type(model_config) == dict: # pass it in directly from yaml
-            model_config['layer_norm_epsilon'] = float(model_config['layer_norm_epsilon'])
-            model_config = T5Config.from_dict(model_config, cache_dir=self.cache_dir, vocab_size=self.tokenizer.vocab_size)
-        elif model_config:
-            model_config = T5Config.from_pretrained(
-                model_config, cache_dir=self.cache_dir, vocab_size=self.tokenizer.vocab_size
-            )
+        self.tasks = get_train_dataset(self.get("dataset_name"), self.get("seed"), sequence_length, self.num_shards, self.global_rank, self.get("per_device_train_batch_size"))
+        if xla_found:
+            self.train_loader = iter(pl.MpDeviceLoader(iter(self.tasks), self.device))
         else:
-            model_config = CONFIG_MAPPING[self.model_type]()
-        return model_config
+            self.train_loader = iter(self.tasks)
 
-    def reduce_gradients(self):
-        # AllReduce the model gradients so we can step the global gradient
-        if not xla_found:
-            return
-        
-        xm.reduce_gradients(self.optimizer)
 
-        if not self.is_multi_host:
-            return
+    def save_checkpoint(self):
+        data = {"model": self.model.state_dict(), "optim": self.optimizer.state_dict()}
 
-        # if self.is_master_ordinal:
-        #     dist.all_reduce(param.grad.cpu() / dist.get_world_size())
-        #     xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
-        # else:
-        #     zeros = torch.zeros_like(param.grad)
-        #     xm.all_reduce(xm.REDUCE_SUM, zeros)
+        if xla_found and self.is_master_ordinal:
+            local_checkpoint_path = f"/tmp/checkpoint.pt"
+            gcs_checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
+            print(f"checkpointing the model to {gcs_checkpoint_path}")
+            xm.save(data, local_checkpoint_path)
+            _upload_blob_gcs(local_checkpoint_path, gcs_checkpoint_path)
+        else:
+            checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+            print(f"checkpointing the model to {checkpoint_path}")
+            torch.save(data, checkpoint_path)
 
+    def load_checkpoint(self):
+        if xla_found:
+            checkpoint_data = xm.load(self.get("checkpoint_path"))
+        else:
+            checkpoint_data = torch.load(self.get("checkpoint_path"))
+        self.model.load_state_dict(checkpoint_data["model"])
+        self.optimizer.load_state_dict(checkpoint_data["optim"])
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 1
@@ -212,83 +239,50 @@ class Trainer(BaseExperiment, WandBMixin, IOMixin):
         self.wandb_log(**{"instantaneous it/s": tracker.rate(), "global it/s": tracker.global_rate()})
 
         # Get a text example and log it
-        input, label, pred, accuracy= self.decode_and_compute_accuracy(x, x_hat)
+        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
         self.table = wandb.Table(columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"])
         self.table.add_data(step, accuracy, loss, input, label, pred)
         self.wandb_log(**{"accuracy": accuracy, "examples": self.table, "train_loss": loss, "num_tokens": self.get("max_seq_length") * self.total_batch_size * self.step})
 
-    def log(self, x, x_hat):
+    def log(self, x, x_hat, tracker):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
             xm.add_step_closure(
                 self._log,
-                args=(self.step, self.tracker, x, x_hat))
+                args=(self.step, tracker, x, x_hat))
 
         # Otherwise just call the function to log directly
         else:
-            self._log(self.step, self.tracker, x, x_hat)
+            self._log(self.step, tracker, x, x_hat)
+
+    def loss(self, logits, labels):
+        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
+        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+        return loss
 
     def run(self):
+        tracker = RateTracker()
+        self.model.train()
 
-        for step in range(self.get("num_train_steps")):
-
-            # Get data
-            x = next(self.train_loader)
-
-            # Forward model
+        for x in self.progress(self.train_loader, desc="Training", tag="train"):
             x_hat = self.model(**x)
+            loss = self.loss(x_hat.logits, x['labels'])
+            loss.backward()
 
-            # Optimization
-            x_hat.loss.backward()
-            if (step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-                self.reduce_gradients()
+            if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
+                reduce_gradients(xla_found, self.is_multi_host, self.optimizer)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
             # Increment step count
             self.next_step()
-            self.tracker.add(1)
+            tracker.add(1)
 
-            if self.log_now:
-                self.log(x, x_hat)
+            if self.log_scalars_now and self.is_master_ordinal:
+                self.log(x, x_hat, tracker)
 
             if self.checkpoint_now:
                 self.save_checkpoint()
-
-    @property
-    def log_now(self):
-        return self.step % self.get("log_every") == 0 and self.step > 0 and self.is_master_ordinal
-
-    @property
-    def evaluate_now(self):
-        return self.step % self.get("eval_every") == 0 and self.step > 0
-
-    @property
-    def checkpoint_now(self):
-        return self.step % self.get("checkpoint_every") == 0 and self.step > 0
-
-    def save_checkpoint(self):
-        data = {"model": self.model.state_dict(), "optim": self.optimizer.state_dict()}
-
-        if xla_found and self.is_master_ordinal:
-            local_checkpoint_path = f"/tmp/checkpoint.pt"
-            gcs_checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
-            print(f"checkpointing the model to {gcs_checkpoint_path}")
-            xm.save(data, local_checkpoint_path)
-            _upload_blob_gcs(local_checkpoint_path, gcs_checkpoint_path)
-        else:
-            checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
-            print(f"checkpointing the model to {checkpoint_path}")
-            torch.save(data, checkpoint_path)
-
-    def load_checkpoint(self):
-        if xla_found:
-            checkpoint_data = xm.load(self.get("checkpoint_path"))
-        else:
-            checkpoint_data = torch.load(self.get("checkpoint_path"))
-        self.model.load_state_dict(checkpoint_data["model"])
-        self.optimizer.load_state_dict(checkpoint_data["optim"])
-
 
 def _mp_fn(index, args):
     Trainer().run()
