@@ -22,22 +22,20 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import wandb
-import time
-import numpy as np
-import itertools
+import torch
+import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior()
 from transformers import (
     CONFIG_MAPPING,
     T5ForConditionalGeneration,
+    SwitchForConditionalGeneration,
     T5Config,
     set_seed,
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin
 from polytax.data.utils import get_train_dataset
 from polytax.utils.utils import _upload_blob_gcs, reduce_gradients
-import torch
-import torch.distributed as dist
 from transformers.optimization import Adafactor
 from t5.data.utils import get_default_vocabulary
 
@@ -143,8 +141,13 @@ class Trainer(BaseExperiment, WandBMixin, IOMixin):
             )
         else:
             model_config = CONFIG_MAPPING[self.get("model_type")]()
-        self.model = T5ForConditionalGeneration(model_config).to(self.device)
+
+        if "switch" in self.model_config.model_type:
+            self.model = SwitchForConditionalGeneration(self.model_config).to(self.device)
+        else:
+            self.model = T5ForConditionalGeneration(self.model_config).to(self.device)
         self.model.train()
+
 
     def _build_optimizer(self):
         # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
