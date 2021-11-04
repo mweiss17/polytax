@@ -25,8 +25,14 @@ adam_beta1: 0.9
 adam_beta2: 0.999
 
 # Steps
-log_every: 100
-checkpoint_every: 1000
+
+training:
+  checkpoint_every: 10000
+
+# Steps
+wandb:
+  log_scalars_every: 1000
+
 eval_every: 100
 num_train_steps: 1000000
 num_eval_steps: 100
