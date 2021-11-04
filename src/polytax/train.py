@@ -31,6 +31,7 @@ from transformers import (
     T5ForConditionalGeneration,
     SwitchForConditionalGeneration,
     T5Config,
+    SwitchConfig,
     set_seed,
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin
