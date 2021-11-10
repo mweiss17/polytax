@@ -5,29 +5,32 @@ seed: 12345
 # Multi-host
 backend: "GLOO" # use NCCL for GPU
 
-# Tokenizer
-tokenizer:
-  kwargs:
-    tokenizer_name: "./tokenizer/"
-    use_fast: True
-
 # Dataset and Batch Size
-dataset_name: "tiny_shakespeare"
-max_seq_length: 32
-per_device_train_batch_size: 4
-per_device_eval_batch_size: 4
+dataset:
+  train:
+    kwargs:
+      name: "tiny_shakespeare"
+      max_seq_length: 32
+      per_device_batch_size: 4
+  validation:
+    name: "glue_v002_proportional" # "glue_cola_v002"
+    kwargs:
+      max_seq_length: 32
+      batch_size: 4
 
-# Optimization
-adafactor: "True"
-learning_rate: 0.005
-weight_decay: 0.001
-warmup_steps: 2000
-dtype: "float32"
-adam_beta1: 0.9
-adam_beta2: 0.999
+# Optimizer
+optim:
+  name: "Adafactor"
+  kwargs:
+    clip_threshold: 1.0
+    decay_rate: -0.8
+    weight_decay: 0.0
+    relative_step: True
+    scale_parameter: True
+    warmup_init: True
+
 
 # Steps
-
 training:
   checkpoint_every: 1
 
@@ -35,12 +38,13 @@ training:
 wandb:
   log_scalars_every: 1
 
-eval_every: 5
+valid_every: 1
 num_train_steps: 200
 num_eval_steps: 1
 
 # Logging
 use_wandb: True
+
 # Model Config
 model_config:
   d_ff: 32
@@ -53,7 +57,7 @@ model_config:
   gradient_checkpointing: "False"
   initializer_factor: 1.0
   is_encoder_decoder: "True"
-  layer_norm_epsilon: 1e-06
+  layer_norm_epsilon: 1e-6
   model_type: "t5-xs"
   num_decoder_layers: 1
   num_heads: 2
