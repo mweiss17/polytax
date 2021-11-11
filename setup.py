@@ -1,3 +1,4 @@
+import subprocess
 import setuptools
 
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -48,3 +49,28 @@ setuptools.setup(
         ],
     },
 )
+
+# If XLA is installed, then we setup some TPU-specific environment stuff
+try:
+    import torch_xla
+
+    print("XLA support enabled")
+    subprocess.call(
+        'export WANDB_API_KEY=$(curl "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key" -H "Metadata-Flavor: Google")'.split()
+    )
+    subprocess.call('echo export WANDB_API_KEY="${WANDB_API_KEY}" >> ~/.bashrc'.split())
+    subprocess.call(
+        'git config --global user.email "martin.clyde.weiss@gmail.com"'.split()
+    )
+    subprocess.call('git config --global user.name "Martin Weiss"'.split())
+    subprocess.call("export PATH=$PATH:/home/$USER/.local/bin".split())
+    subprocess.call("unset LD_PRELOAD".split())
+    subprocess.call('export XRT_TPU_CONFIG="localservice;0;localhost:51011"'.split())
+    subprocess.call(
+        'echo export XRT_TPU_CONFIG="localservice\;0\;localhost:51011" >> ~/.bashrc'.split()
+    )
+    subprocess.call(
+        'python3 -m torch.distributed.run --nnodes=1 --nproc_per_node=1 --rdzv_id=1 --rdzv_backend=c10d --rdzv_endpoint="localhost:2379"  train.py experiments/$expname --inherit $templatename'.split()
+    )
+except ImportError:
+    print("XLA support disabled")

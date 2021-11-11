@@ -9,11 +9,11 @@ def _upload_blob_gcs(local_path, gcs_path):
     blob.upload_from_filename(local_path)
 
 
-def _read_blob_gcs(bucket, checkpoint_file, destination):
+def _read_blob_gcs(bucket, remote_file_path, destination):
     """Downloads a file from GCS to local directory"""
     client = storage.Client()
     bucket = client.get_bucket(bucket)
-    blob = bucket.get_blob(checkpoint_file)
+    blob = bucket.get_blob(remote_file_path)
     blob.download_to_filename(destination)
 
 

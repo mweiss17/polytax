@@ -22,8 +22,13 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import wandb
-from typing import Dict, Callable, Tuple, Union, Optional
+import argparse
+from copy import deepcopy
+from typing import Union, List
 import torch
+import wormulon
+from wormulon.core import TPUJob
+from wormulon.utils import JobStatus, _read_blob_gcs
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -34,7 +39,7 @@ from transformers import (
     T5Config,
     set_seed,
 )
-from speedrun import BaseExperiment, WandBMixin, IOMixin
+from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
 from t5.data.utils import get_default_vocabulary
 
@@ -70,11 +75,23 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
     WANDB_ENTITY = "mweiss10"
 
-    def __init__(self):
+    def __init__(self, nanny: "Nanny"):
         super(Trainer, self).__init__()
-        self.auto_setup()
-        training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
-        self._build(training_state)
+        # self.auto_setup()
+        # training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
+        # self._build(training_state)
+        self._preconfigure(nanny)
+
+    def _preconfigure(self, nanny: "Nanny"):
+        # Copy only the essentials from the parent class, i.e. the things that can be
+        # easily serialized.
+        self._experiment_directory = nanny._experiment_directory
+        self._config = deepcopy(nanny._config)
+        self._argv = deepcopy(nanny._argv)
+        self.WANDB_ENTITY = nanny.WANDB_ENTITY
+        self.WANDB_PROJECT = nanny.WANDB_PROJECT
+        # Bit of a hack, but we set this here to have it uploaded to wandb.
+        self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
     def _build(self, training_state: "TrainingState"):
         print(f"{self._config}")
@@ -356,8 +373,129 @@ def _mp_fn(index, args):
     Trainer().run()
 
 
+class Nanny(WandBMixin, IOMixin, BaseExperiment):
+    WANDB_ENTITY = "mweiss10"
+    WANDB_PROJECT = "polytax"
+
+    def __init__(self):
+        super(Nanny, self).__init__()
+        self.auto_setup()
+
+    def make_trainer(self):
+        if xla_found:
+            xmp.spawn(_mp_fn, args=({},), nprocs=8)
+        else:
+            return [Trainer(self)]
+
+    def _launch(
+        self, trainer: "Trainer", training_state: "TrainingState",
+    ) -> Union[TrainingState, JobStatus]:
+        breakpoint()
+        # Launch each training process in its own job
+        handler = wormulon.core.tpu_submit(
+            trainer,
+            training_state,
+            network=self.get("network", "tpu-network"),
+            subnetwork=self.get("subnetwork", "swarm-2"),
+            network_range=self.get("network_range", "192.169.0.0/29"),
+            tpu_type=self.get("tpu_type", "v2-8"),
+            preemptible=self.get("preemptible", False),
+        )
+        self.print(
+            f"Awaiting job at {handler.job.directory} "
+            f"with ClusterID {handler.job.cluster_id}."
+        )
+        self.print("----------------")
+        try:
+            # Only the chief returns a training state.
+            job_output = handler.wait(
+                timeout=self.get_arg("job_timeout", default=None)
+            )  # type: Union[TrainingState, JobTimeout]
+            if handler.job_has_failed:
+                raise RuntimeError(
+                    f"Chief Job has failed. The following object was"
+                    f" returned: {job_output}"
+                )
+            if handler.job_has_failed:
+                self.print(
+                    f"Distributed process #0 "
+                    f"({handler.job.directory}) has reported "
+                    f"a failure by returning the following:\n{handler.output}"
+                )
+        finally:
+            handler.clean_up()
+        return job_output
+
+    def launch(
+        self, trainer: "Trainer", training_state: "TrainingState",
+    ) -> "TrainingState":
+        if self.get_arg("local_job", False):
+            training_state = trainer(training_state)
+        else:
+            # Try again if timed out
+            num_attempts = 0
+            max_num_attempts = self.get_arg("max_timeout_retries", default=0)
+            while True:
+                job_output = self._launch(trainer, training_state)
+                if TrainingState.is_instance(job_output):
+                    # mazel tov
+                    training_state = job_output
+                    break
+                elif JobStatus.is_instance(job_output):
+                    self.print("Job timed out. Trying again...")
+                    if num_attempts < max_num_attempts:
+                        # Try again
+                        num_attempts += 1
+                        continue
+                    else:
+                        # Job has timed out the max number of times allowed.
+                        raise TimeoutError(
+                            f"Job has timed out after {max_num_attempts} attempts. "
+                            f"The timeout is set to {self.get_arg('job_timeout')}s."
+                        )
+                else:
+                    raise TypeError(
+                        f"Was expecting an output of type `TrainingState` "
+                        f"or `JobTimeout`, got one of type {type(job_output)} instead."
+                    )
+        # Update self
+        self._step = training_state.step
+        self._epoch = training_state.epoch
+        return training_state
+
+    # noinspection PyMethodOverriding
+    def checkpoint(self, training_state: "TrainingState") -> "TrainingState":
+        training_state.serialize(self.checkpoint_path)
+        return training_state
+
+    @register_default_dispatch
+    def train(self):
+        self.initialize_wandb(resume=False)
+
+        # Build initial training state
+        training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
+        # Setup the epoch runner
+        trainer = self.make_trainer()
+        # Run it
+        training_state = self.launch(trainer, training_state)
+        # Checkpoint training state
+        self.checkpoint(training_state)
+
+
 if __name__ == "__main__":
+    # Assume it's a distributed job
     if xla_found:
-        xmp.spawn(_mp_fn, args=({},), nprocs=8)
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("trainer_path", type=str, description="Trainer path")
+        parser.add_argument("state_path", type=str, description="training state path")
+        parser.add_argument("bucket", type=str)
+        args = parser.parse_args()
+
+        trainer = _read_blob_gcs(args.bucket, args.trainer_path, dest="/tmp/")
+        training_state = _read_blob_gcs(args.bucket, args.state_path, dest="/tmp/")
+        training_state = TrainingState.deserialize(training_state)
+        training_state = Trainer(training_state)
+
     else:
-        Trainer().run()
+        Nanny().run()
