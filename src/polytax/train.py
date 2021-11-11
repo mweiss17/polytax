@@ -493,11 +493,14 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser()
         parser.add_argument("trainer_path", type=str, description="Trainer path")
         parser.add_argument("state_path", type=str, description="training state path")
-        parser.add_argument("bucket", type=str)
         args = parser.parse_args()
 
-        trainer = _read_blob_gcs(args.bucket, args.trainer_path, dest="/tmp/")
-        training_state = _read_blob_gcs(args.bucket, args.state_path, dest="/tmp/")
+        trainer = _read_blob_gcs(
+            "must-results", args.trainer_path, "/tmp/trainer_state"
+        )
+        training_state = _read_blob_gcs(
+            "must-results", args.state_path, "/tmp/training_state"
+        )
         training_state = TrainingState.deserialize(training_state)
         training_state = Trainer(training_state)
 
