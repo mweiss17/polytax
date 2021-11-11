@@ -231,7 +231,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return pickle.dumps(self)
 
     @property
-    def train_state(self, misc_attributes: dict = None):
+    def training_state(self, misc_attributes: dict = None):
         return TrainingState(
             step=self.step,
             epoch=self.epoch,
@@ -338,7 +338,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
-    def run(self):
+    def run(self, training_state):
+        self._build(training_state)
         self.model.train()
         for x in self.progress(self.train_loader, desc="Training", tag="train"):
             x_hat = self.model(**x)
@@ -361,7 +362,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 self.validate()
 
             if self.checkpoint_now:
-                self.checkpoint(self.train_state)
+                self.checkpoint(self.training_state)
+        return self.training_state
 
     def validate(self):
         self.model.eval()
@@ -433,9 +435,9 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> "TrainingState":
-        if self.get_arg("local_job", False):
-            training_state = trainer(training_state)
-        else:
+        breakpoint()
+
+        if self.get_arg("tpu_job", False):
             # Try again if timed out
             num_attempts = 0
             max_num_attempts = self.get_arg("max_timeout_retries", default=0)
@@ -462,6 +464,9 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                         f"Was expecting an output of type `TrainingState` "
                         f"or `JobTimeout`, got one of type {type(job_output)} instead."
                     )
+        else:
+            training_state = trainer(training_state)
+
         # Update self
         self._step = training_state.step
         self._epoch = training_state.epoch

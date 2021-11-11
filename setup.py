@@ -75,8 +75,8 @@ try:
     os.putenv("WANDB_API_KEY", key.decode("utf-8"))
     user = os.environ["USER"]
     with open(f"/home/{user}/.bashrc", "a") as f:
-        f.write(f"export WANDB_API_KEY={key.decode('utf-8')} >> ~/.bashrc\n")
-        f.write("export XRT_TPU_CONFIG=localservice;0;localhost:51011\n")
+        f.write(f"export WANDB_API_KEY={key.decode('utf-8')}\n")
+        f.write('export XRT_TPU_CONFIG="localservice;0;localhost:51011"\n')
         f.write("export PATH=$PATH:/home/$USER/.local/bin\n")
         f.write("unset LD_PRELOAD\n")
     output, err = execute(
