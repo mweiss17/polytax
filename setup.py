@@ -1,5 +1,11 @@
+import os
 import subprocess
 import setuptools
+
+def execute(command):
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+    output, error = process.communicate()
+    return output, error
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -42,6 +48,7 @@ setuptools.setup(
         "torch_lr_scheduler",
         "speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@dev#egg=speedrun",
         "transformers @ git+https://github.com/Arka161/transformers@master#egg=transformers",
+        "wormulon @ git+ssh://git@github.com/mweiss17/wormulon@main#egg=wormulon",
     ],
     extras_require={
         "xla": [
@@ -53,24 +60,19 @@ setuptools.setup(
 # If XLA is installed, then we setup some TPU-specific environment stuff
 try:
     import torch_xla
-
     print("XLA support enabled")
-    subprocess.call(
-        'export WANDB_API_KEY=$(curl "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key" -H "Metadata-Flavor: Google")'.split()
-    )
-    subprocess.call('echo export WANDB_API_KEY="${WANDB_API_KEY}" >> ~/.bashrc'.split())
-    subprocess.call(
+    key, err = execute(["curl" ,"http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key", "-H", "Metadata-Flavor: Google"])
+    os.putenv("WANDB_API_KEY", key.decode("utf-8"))
+    user = os.environ["USER"]
+    with open(f"/home/{user}/.bashrc", "a") as f:
+        f.write(f"export WANDB_API_KEY={key.decode('utf-8')} >> ~/.bashrc\n")
+        f.write("export XRT_TPU_CONFIG=localservice;0;localhost:51011\n")
+        f.write("export PATH=$PATH:/home/$USER/.local/bin\n")
+        f.write("unset LD_PRELOAD\n")
+    output, err = execute(
         'git config --global user.email "martin.clyde.weiss@gmail.com"'.split()
     )
-    subprocess.call('git config --global user.name "Martin Weiss"'.split())
-    subprocess.call("export PATH=$PATH:/home/$USER/.local/bin".split())
-    subprocess.call("unset LD_PRELOAD".split())
-    subprocess.call('export XRT_TPU_CONFIG="localservice;0;localhost:51011"'.split())
-    subprocess.call(
-        'echo export XRT_TPU_CONFIG="localservice\;0\;localhost:51011" >> ~/.bashrc'.split()
-    )
-    subprocess.call(
-        'python3 -m torch.distributed.run --nnodes=1 --nproc_per_node=1 --rdzv_id=1 --rdzv_backend=c10d --rdzv_endpoint="localhost:2379"  train.py experiments/$expname --inherit $templatename'.split()
-    )
+    output, err = execute('git config --global user.name "Martin Weiss"'.split())
 except ImportError:
-    print("XLA support disabled")
+    pass
+
