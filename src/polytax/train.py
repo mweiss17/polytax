@@ -23,10 +23,12 @@ https://huggingface.co/models?filter=t5
 import os
 import wandb
 import argparse
+import pickle
 from copy import deepcopy
-from typing import Union, List
+from typing import Union
 import torch
 import wormulon
+from wormulon.tpu_submit import tpu_submit
 from wormulon.core import TPUJob
 from wormulon.utils import JobStatus, _read_blob_gcs
 import torch.distributed as dist
@@ -67,7 +69,7 @@ from polytax.data.utils import (
     get_validation_datasets,
     run_evaluation,
 )
-from polytax.utils.utils import _upload_blob_gcs, reduce_gradients
+from polytax.utils.utils import reduce_gradients
 from polytax.utils.train_state import TrainingState
 
 
@@ -224,6 +226,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     @property
     def schedulers_state_dict(self):
         return {}
+
+    def serialize(self):
+        return pickle.dumps(self)
 
     @property
     def train_state(self, misc_attributes: dict = None):
@@ -382,17 +387,16 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         self.auto_setup()
 
     def make_trainer(self):
-        if xla_found:
-            xmp.spawn(_mp_fn, args=({},), nprocs=8)
-        else:
-            return [Trainer(self)]
+        return Trainer(self)
 
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        breakpoint()
+
+        path = os.path.join("gs://must-results/", self.experiment_directory)
         # Launch each training process in its own job
-        handler = wormulon.core.tpu_submit(
+        handler = tpu_submit(
+            path,
             trainer,
             training_state,
             network=self.get("network", "tpu-network"),
@@ -496,6 +500,8 @@ if __name__ == "__main__":
         training_state = _read_blob_gcs(args.bucket, args.state_path, dest="/tmp/")
         training_state = TrainingState.deserialize(training_state)
         training_state = Trainer(training_state)
+
+        xmp.spawn(_mp_fn, args=({},), nprocs=8)
 
     else:
         Nanny().run()

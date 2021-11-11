@@ -2,6 +2,7 @@ from typing import Union
 import torch
 import torch.nn as nn
 from dataclasses import dataclass, field
+import pickle
 
 try:
     import torch_xla.core.xla_model as xm
@@ -25,7 +26,7 @@ class TrainingState(object):
     schedulers_state_dict: Union[dict, NotAvailable]
     misc_attributes: dict = field(default_factory=dict)
 
-    def serialize(self, path):
+    def serialize(self, path=None):
         states = {
             "step": self.step,
             "epoch": self.epoch,
@@ -34,6 +35,8 @@ class TrainingState(object):
             "optims_state_dict": self.optims_state_dict,
             "schedulers_state_dict": self.schedulers_state_dict,
         }
+        if not path:
+            return pickle.dumps(states)
         if xm:
             xm.save(states, path)
         else:
