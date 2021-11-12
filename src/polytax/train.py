@@ -31,7 +31,7 @@ import torch
 import wormulon
 from wormulon.tpu_submit import tpu_submit
 from wormulon.core import TPUJob
-from wormulon.utils import JobStatus, _read_blob_gcs
+from wormulon.utils import JobStatus, _read_blob_gcs, _upload_data_to_gcs
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -90,6 +90,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._argv = deepcopy(nanny._argv)
         self.WANDB_ENTITY = nanny.WANDB_ENTITY
         self.WANDB_PROJECT = nanny.WANDB_PROJECT
+        self.WANDB_RUN_ID = nanny.WANDB_RUN_ID
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
@@ -104,6 +105,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._step = training_state.step
         self._epoch = training_state.epoch
         self.tracker = RateTracker()
+        # Builds the local directory structure.
+        self.experiment_directory = self._experiment_directory
 
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
@@ -394,16 +397,27 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def make_trainer(self):
         return Trainer(self)
 
+    def upload(self, bucket, trainer, training_state):
+        import time
+
+        prefix = f"/{self.experiment_directory}/{str(time.time())}"
+        trainer_path = f"{prefix}/trainer.pt"
+        training_state_path = f"{prefix}/training_state.pt"
+        print(f"uploading training state and trainer to {prefix}.")
+        _upload_data_to_gcs(bucket, trainer_path, trainer.serialize())
+        _upload_data_to_gcs(bucket, training_state_path, training_state.serialize())
+        return trainer_path, training_state_path
+
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
         bucket = "gs://must-results"
+        trainer_path, training_state_path = self.upload(bucket, trainer, training_state)
+        train_cmd = f"cd ~/polytax/src/polytax; python3 train.py {bucket} {trainer_path} {training_state_path} "
+
         # Launch each training process in its own job
         handler = tpu_submit(
-            bucket,
-            self.experiment_directory,
-            trainer,
-            training_state,
+            train_cmd,
             network=self.get("network", "tpu-network"),
             subnetwork=self.get("subnetwork", "swarm-2"),
             network_range=self.get("network_range", "192.169.0.0/29"),
@@ -480,7 +494,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     @register_default_dispatch
     def train(self):
         self.initialize_wandb(resume=False)
-
         # Build initial training state
         training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
         # Setup the epoch runner
