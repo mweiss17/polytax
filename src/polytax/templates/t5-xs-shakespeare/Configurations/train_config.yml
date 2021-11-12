@@ -12,11 +12,11 @@ dataset:
       name: "tiny_shakespeare"
       max_seq_length: 32
       per_device_batch_size: 4
-  validation:
-    name: "glue_v002_proportional" # "glue_cola_v002"
-    kwargs:
-      max_seq_length: 32
-      batch_size: 4
+#  validation:
+#    name: "glue_v002_proportional" # "glue_cola_v002"
+#    kwargs:
+#      max_seq_length: 32
+#      batch_size: 4
 
 # Optimizer
 optim:

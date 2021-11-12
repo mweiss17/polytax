@@ -125,15 +125,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             split="train",
             device=self.device,
         )
-        self.valid_tasks = get_validation_tasks(
-            name=self.get("dataset/validation/name"), split="validation"
-        )
-        self.valid_loaders = get_validation_datasets(
-            self.valid_tasks,
-            **self.get("dataset/validation/kwargs"),
-            split="validation",
-            device=self.device,
-        )
+        if self.get("dataset/validation"):
+            self.valid_tasks = get_validation_tasks(
+                name=self.get("dataset/validation/name"), split="validation"
+            )
+            self.valid_loaders = get_validation_datasets(
+                self.valid_tasks,
+                **self.get("dataset/validation/kwargs"),
+                split="validation",
+                device=self.device,
+            )
 
     def _build_model(self, training_state: "TrainingState"):
         self.tokenizer = get_default_vocabulary()
@@ -367,6 +368,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def validate(self):
         self.model.eval()
+        if not self.get("datsaets/validation"):
+            return
         with torch.no_grad():
             # get list of outputs
             outputs = run_evaluation(
@@ -435,9 +438,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> "TrainingState":
-        breakpoint()
-
-        if self.get_arg("tpu_job", False):
+        if self.get("use_tpu", False):
             # Try again if timed out
             num_attempts = 0
             max_num_attempts = self.get_arg("max_timeout_retries", default=0)
