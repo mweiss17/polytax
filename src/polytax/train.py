@@ -90,7 +90,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._argv = deepcopy(nanny._argv)
         self.WANDB_ENTITY = nanny.WANDB_ENTITY
         self.WANDB_PROJECT = nanny.WANDB_PROJECT
-        self.WANDB_RUN_ID = nanny.WANDB_RUN_ID
+        self.WANDB_RUN_ID = nanny.wandb_run_id
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
@@ -247,17 +247,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         )
 
     def checkpoint(self, training_state: "TrainingState"):
-        tmp_checkpoint_path = f"/tmp/checkpoint.pt"
-        gcs_checkpoint_path = f"gs://{self.get('gcs_bucket', 'must-results')}/{self.experiment_directory}/Weights/model-{self.step}.pt"
         checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
 
         if xla_found and self.is_master_ordinal:
-            print(f"checkpointing the model to {gcs_checkpoint_path}")
-            training_state.serialize(tmp_checkpoint_path)
-            _upload_blob_gcs(tmp_checkpoint_path, gcs_checkpoint_path)
+            print(f"checkpointing the model to {checkpoint_path}")
+            buffer = training_state.serialize()
+            _upload_data_to_gcs(self.bucket, checkpoint_path, buffer)
         else:
             print(f"checkpointing the model to {checkpoint_path}")
-            training_state.serialize(checkpoint_path)
+            buffer = training_state.serialize()
+            torch.save(buffer, checkpoint_path)
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 1
