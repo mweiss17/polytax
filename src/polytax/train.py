@@ -255,7 +255,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if xla_found and self.is_master_ordinal:
             print(f"checkpointing the model to {checkpoint_path}")
             self.tpu_job.training_state = training_state
-            self.tpu_job.trainer = self
             self.tpu_job.upload()
 
         else:
@@ -512,7 +511,8 @@ if __name__ == "__main__":
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
         tpu_job = torch.load(tpu_job_buffer)
-        training_state = tpu_job.trainer(tpu_job.training_state, tpu_job)
+        trainer = deepcopy(tpu_job.trainer)
+        training_state = trainer(tpu_job.training_state, tpu_job)
 
         xmp.spawn(_mp_fn, args=({},), nprocs=8)
 
