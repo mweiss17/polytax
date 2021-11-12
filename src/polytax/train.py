@@ -503,14 +503,15 @@ if __name__ == "__main__":
 
         parser = argparse.ArgumentParser()
         parser.add_argument("bucket", type=str)
-        parser.add_argument("trainer_path", type=str)
-        parser.add_argument("state_path", type=str)
+        parser.add_argument("tpu_job_path", type=str)
         args = parser.parse_args()
 
-        trainer_buff = _read_blob_gcs(args.bucket, args.trainer_path)
+        tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
+        tpu_job = torch.load(tpu_job_buffer)
+        trainer_buff, training_state_buff = tpu_job.setup()
         trainer = torch.load(trainer_buff)
-        state_buff = _read_blob_gcs(args.bucket, args.state_path)
-        training_state = TrainingState.deserialize(state_buff)
+        training_state = TrainingState.deserialize(training_state_buff)
+
         training_state = trainer(training_state)
 
         xmp.spawn(_mp_fn, args=({},), nprocs=8)
