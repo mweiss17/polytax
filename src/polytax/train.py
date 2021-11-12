@@ -105,8 +105,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._step = training_state.step
         self._epoch = training_state.epoch
         self.tracker = RateTracker()
+
         # Builds the local directory structure.
         self.experiment_directory = self._experiment_directory
+        os.environ["WANDB_RUN_ID"] = self.WANDB_RUN_ID
 
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
@@ -508,7 +510,7 @@ if __name__ == "__main__":
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
         tpu_job = torch.load(tpu_job_buffer)
-        trainer_buff, training_state_buff = tpu_job.setup()
+        trainer_buff, training_state_buff = tpu_job.get_trainer_and_trainstate()
         trainer = torch.load(trainer_buff)
         training_state = TrainingState.deserialize(training_state_buff)
 
