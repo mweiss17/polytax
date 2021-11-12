@@ -79,9 +79,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def __init__(self, nanny: "Nanny"):
         super(Trainer, self).__init__()
-        # self.auto_setup()
-        # training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
-        # self._build(training_state)
         self._preconfigure(nanny)
 
     def _preconfigure(self, nanny: "Nanny"):
@@ -397,11 +394,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-
-        path = os.path.join("gs://must-results/", self.experiment_directory)
+        bucket = "gs://must-results/"
         # Launch each training process in its own job
         handler = tpu_submit(
-            path,
+            bucket,
+            self.experiment_directory,
             trainer,
             training_state,
             network=self.get("network", "tpu-network"),
@@ -497,15 +494,14 @@ if __name__ == "__main__":
     if xla_found:
 
         parser = argparse.ArgumentParser()
-        parser.add_argument("trainer_path", type=str, description="Trainer path")
-        parser.add_argument("state_path", type=str, description="training state path")
+        parser.add_argument("bucket", type=str)
+        parser.add_argument("trainer_path", type=str)
+        parser.add_argument("state_path", type=str)
         args = parser.parse_args()
 
-        trainer = _read_blob_gcs(
-            "must-results", args.trainer_path, "/tmp/trainer_state"
-        )
+        trainer = _read_blob_gcs(args.bucket, args.trainer_path, "/tmp/trainer_state")
         training_state = _read_blob_gcs(
-            "must-results", args.state_path, "/tmp/training_state"
+            args.bucket, args.state_path, "/tmp/training_state"
         )
         training_state = TrainingState.deserialize(training_state)
         training_state = Trainer(training_state)
