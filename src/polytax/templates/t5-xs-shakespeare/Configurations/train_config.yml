@@ -67,3 +67,14 @@ model_config:
   transformers_version: "4.10.0.dev0"
   use_cache: false
   vocab_size: 32003
+
+tpu:
+  kwargs:
+    bucket: "must-results"
+    zone: "us-central1-f"
+    network: "tpu-network"
+    subnet: "swarm-2"
+    netrange: "192.169.0.0/29"
+    acc_type: "v2-8"
+    preemptible: False
+    asynch: False

@@ -396,37 +396,32 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def make_trainer(self):
         return Trainer(self)
 
-    def upload(self, bucket, trainer, training_state):
-        import time
-
-        prefix = f"/{self.experiment_directory}/{str(time.time())}"
-        trainer_path = f"{prefix}/trainer.pt"
-        training_state_path = f"{prefix}/training_state.pt"
-        print(f"uploading training state and trainer to {prefix}.")
-        _upload_data_to_gcs(bucket, trainer_path, trainer.serialize())
-        _upload_data_to_gcs(bucket, training_state_path, training_state.serialize())
-        return trainer_path, training_state_path
-
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        bucket = "gs://must-results"
-        trainer_path, training_state_path = self.upload(bucket, trainer, training_state)
-        train_cmd = f"cd ~/polytax/src/polytax; python3 train.py {bucket} {trainer_path} {training_state_path} "
+        from wormulon.core import TPU, TPUJob
 
-        # Launch each training process in its own job
-        handler = tpu_submit(
+        tpu = TPU(**self.get("tpu/kwargs"))
+        train_cmd = f"cd ~/polytax; python3 src/polytax/train.py "
+        install_cmd = (
+            f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
+            f"pip install -e polytax[xla]; "
+        )
+        tpu_job = TPUJob(
+            self.wandb_run_id,
+            self.experiment_directory,
+            tpu,
+            trainer,
+            training_state,
+            install_cmd,
             train_cmd,
-            network=self.get("network", "tpu-network"),
-            subnetwork=self.get("subnetwork", "swarm-2"),
-            network_range=self.get("network_range", "192.169.0.0/29"),
-            tpu_type=self.get("tpu_type", "v2-8"),
-            preemptible=self.get("preemptible", False),
         )
-        self.print(
-            f"Awaiting job at {handler.job.directory} "
-            f"with ClusterID {handler.job.cluster_id}."
-        )
+        breakpoint()
+        tpu_job.upload()
+        tpu_job.create()
+        tpu_job.install()
+        tpu_job.train()
+
         self.print("----------------")
         try:
             # Only the chief returns a training state.
@@ -439,11 +434,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     f" returned: {job_output}"
                 )
             if handler.job_has_failed:
-                self.print(
-                    f"Distributed process #0 "
                     f"({handler.job.directory}) has reported "
                     f"a failure by returning the following:\n{handler.output}"
                 )
+                self.print(
+                    f"Distributed process #0 "
         finally:
             handler.clean_up()
         return job_output
