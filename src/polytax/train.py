@@ -21,6 +21,7 @@ https://huggingface.co/models?filter=t5
 """
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
+import io
 import wandb
 import argparse
 import pickle
@@ -226,7 +227,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return {}
 
     def serialize(self):
-        return pickle.dumps(self)
+        buffer = io.BytesIO()
+        torch.save(self, buffer)
+        return buffer.getvalue()
 
     @property
     def training_state(self, misc_attributes: dict = None):
@@ -394,7 +397,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        bucket = "gs://must-results/"
+        bucket = "gs://must-results"
         # Launch each training process in its own job
         handler = tpu_submit(
             bucket,
@@ -442,7 +445,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             while True:
                 job_output = self._launch(trainer, training_state)
                 if TrainingState.is_instance(job_output):
-                    # mazel tov
                     training_state = job_output
                     break
                 elif JobStatus.is_instance(job_output):
@@ -490,7 +492,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
 
 if __name__ == "__main__":
-    # Assume it's a distributed job
     if xla_found:
 
         parser = argparse.ArgumentParser()
@@ -499,12 +500,11 @@ if __name__ == "__main__":
         parser.add_argument("state_path", type=str)
         args = parser.parse_args()
 
-        trainer = _read_blob_gcs(args.bucket, args.trainer_path, "/tmp/trainer_state")
-        training_state = _read_blob_gcs(
-            args.bucket, args.state_path, "/tmp/training_state"
-        )
-        training_state = TrainingState.deserialize(training_state)
-        training_state = Trainer(training_state)
+        trainer_buff = _read_blob_gcs(args.bucket, args.trainer_path)
+        trainer = torch.load(trainer_buff)
+        state_buff = _read_blob_gcs(args.bucket, args.state_path)
+        training_state = TrainingState.deserialize(state_buff)
+        training_state = trainer(training_state)
 
         xmp.spawn(_mp_fn, args=({},), nprocs=8)
 
