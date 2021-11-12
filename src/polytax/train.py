@@ -94,8 +94,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
-    def _build(self, training_state: "TrainingState"):
+    def _build(self, training_state: "TrainingState", tpu_job: "TPUJob"):
         print(f"{self._config}")
+        self.tpu_job = tpu_job
         self._build_general(training_state)
         self._build_tasks(training_state)
         self._build_model(training_state)
@@ -253,8 +254,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if xla_found and self.is_master_ordinal:
             print(f"checkpointing the model to {checkpoint_path}")
-            buffer = training_state.serialize()
-            _upload_data_to_gcs(self.bucket, checkpoint_path, buffer)
+            self.tpu_job.training_state = training_state
+            self.tpu_job.trainer = self
+            self.tpu_job.upload()
+
         else:
             print(f"checkpointing the model to {checkpoint_path}")
             buffer = training_state.serialize()
@@ -343,8 +346,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
-    def run(self, training_state):
-        self._build(training_state)
+    def run(self, training_state, tpu_job=None):
+        self._build(training_state, tpu_job)
         self.model.train()
         for x in self.progress(self.train_loader, desc="Training", tag="train"):
             x_hat = self.model(**x)
@@ -418,7 +421,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             install_cmd,
             train_cmd,
         )
-        breakpoint()
         tpu_job.upload()
         tpu_job.create()
         tpu_job.install()
@@ -510,11 +512,7 @@ if __name__ == "__main__":
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
         tpu_job = torch.load(tpu_job_buffer)
-        trainer_buff, training_state_buff = tpu_job.get_trainer_and_trainstate()
-        trainer = torch.load(trainer_buff)
-        training_state = TrainingState.deserialize(training_state_buff)
-
-        training_state = trainer(training_state)
+        training_state = tpu_job.trainer(tpu_job.training_state, tpu_job)
 
         xmp.spawn(_mp_fn, args=({},), nprocs=8)
 
