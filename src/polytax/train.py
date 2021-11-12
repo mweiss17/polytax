@@ -422,25 +422,25 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         tpu_job.install()
         tpu_job.train()
 
-        self.print("----------------")
+        print("----------------")
         try:
             # Only the chief returns a training state.
-            job_output = handler.wait(
-                timeout=self.get_arg("job_timeout", default=None)
+            job_output = tpu_job.wait(
+                timeout=self.get("job_timeout", default=None)
             )  # type: Union[TrainingState, JobTimeout]
-            if handler.job_has_failed:
+            if tpu_job.failed:
                 raise RuntimeError(
                     f"Chief Job has failed. The following object was"
                     f" returned: {job_output}"
                 )
-            if handler.job_has_failed:
-                    f"({handler.job.directory}) has reported "
-                    f"a failure by returning the following:\n{handler.output}"
+            if tpu_job.failed:
+                print(
+                    f"({tpu_job}) has reported "
+                    f"a failure by returning the following:\n{job_output}"
                 )
-                self.print(
-                    f"Distributed process #0 "
+
         finally:
-            handler.clean_up()
+            tpu_job.clean_up()
         return job_output
 
     def launch(
