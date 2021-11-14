@@ -84,3 +84,4 @@ tpu:
     acc_type: "v2-8"
     preemptible: False
     asynch: False
+    timeout: 3600

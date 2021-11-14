@@ -446,16 +446,14 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             install_cmd,
             train_cmd,
         )
-        tpu_job.upload()
-        tpu_job.create()
-        tpu_job.install()
+        # tpu_job.upload()
+        # tpu_job.create()
+        # tpu_job.install()
         tpu_job.train()
 
         print("----------------")
         try:
-            job_output = tpu_job.wait(
-                timeout=self.get("job_timeout", default=None)
-            )  # type: Union[TrainingState, JobTimeout]
+            job_output = tpu_job.wait()  # type: Union[TrainingState, JobTimeout]
             if tpu_job.failed:
                 raise RuntimeError(
                     f"Chief Job has failed. The following object was"
@@ -487,7 +485,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                         # Job has timed out the max number of times allowed.
                         raise TimeoutError(
                             f"Job has timed out after {max_num_attempts} attempts. "
-                            f"The timeout is set to {self.get_arg('job_timeout')}s."
+                            f"The timeout is set to {self.get('job_timeout')}s."
                         )
                 else:
                     raise TypeError(
