@@ -1,6 +1,4 @@
-import functools
 import torch
-import seqio
 
 
 class IterableDataset(torch.utils.data.IterableDataset):

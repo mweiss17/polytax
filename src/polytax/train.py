@@ -24,14 +24,11 @@ import os
 import io
 import wandb
 import argparse
-import pickle
 from copy import deepcopy
 from typing import Union
 import torch
-import wormulon
-from wormulon.tpu_submit import tpu_submit
 from wormulon.core import TPUJob
-from wormulon.utils import JobStatus, _read_blob_gcs, _upload_data_to_gcs
+from wormulon.utils import JobStatus, _read_blob_gcs
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -65,10 +62,11 @@ except Exception as e:
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
 from polytax.data.utils import (
-    get_pretrain_dataset,
-    get_validation_tasks,
-    get_validation_datasets,
-    run_evaluation,
+    get_eval_tasks,
+    get_task,
+    get_dataset,
+    get_eval_datasets,
+    get_targets_and_examples,
 )
 from polytax.utils.utils import reduce_gradients
 from polytax.utils.train_state import TrainingState
@@ -118,27 +116,35 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 self.initialize_wandb(resume=True)
             if self.is_multi_host:
                 # GLOO for CPU comms, NCCL for GPU comms
-                dist.init_process_group(backend=self.get("backend"))
+                dist.init_process_group(backend=self.get("distributed/backend"))
 
     def _build_tasks(self, training_state: "TrainingState"):
-        self.train_loader = get_pretrain_dataset(
-            self.num_shards,
-            self.global_rank,
-            self.get("seed"),
-            **self.get("dataset/train/kwargs"),
-            split="train",
+        if self.get("run_training"):
+            self._build_train_tasks(training_state)
+        if self.get("run_evaluation"):
+            self._build_eval_tasks(training_state)
+
+    def _build_train_tasks(self, training_state: "TrainingState"):
+        self.train_task = get_task(**self.get("dataset/kwargs"))
+        self.train_loader = get_dataset(
+            task=self.train_task,
+            num_shards=self.num_shards,
+            global_rank=self.global_rank,
+            seed=self.get("seed"),
             device=self.device,
+            **self.get("dataset/kwargs"),
         )
-        if self.get("dataset/validation"):
-            self.valid_tasks = get_validation_tasks(
-                name=self.get("dataset/validation/name"), split="validation"
-            )
-            self.valid_loaders = get_validation_datasets(
-                self.valid_tasks,
-                **self.get("dataset/validation/kwargs"),
-                split="validation",
-                device=self.device,
-            )
+
+    def _build_eval_tasks(self, training_state: "TrainingState"):
+        self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
+        self.eval_datasets = get_eval_datasets(
+            tasks=self.eval_tasks,
+            num_shards=self.num_shards,
+            global_rank=self.global_rank,
+            seed=self.get("seed"),
+            device=self.device,
+            **self.get("dataset/kwargs"),
+        )
 
     def _build_model(self, training_state: "TrainingState"):
         self.tokenizer = get_default_vocabulary()
@@ -146,11 +152,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.get("model_config")["layer_norm_epsilon"] = float(
             self.get("model_config")["layer_norm_epsilon"]
         )
-        model_config = T5Config.from_dict(
-            self.get("model_config"),
-            cache_dir=self.get("cache_dir"),
-            vocab_size=self.tokenizer.vocab_size,
-        )
+        self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
+        model_config = T5Config.from_dict(self.get("model_config"),)
 
         if "switch" in model_config.model_type:
             self.model = SwitchForConditionalGeneration(model_config)
@@ -202,14 +205,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     @property
     def total_batch_size(self):
         return (
-            self.get("dataset/train/kwargs/per_device_batch_size")
+            self.get("dataset/kwargs/batch_size")  # per device
             * self.local_world_size
             * self.global_world_size
         )
-
-    @property
-    def validate_now(self):
-        return self.step % self.get("valid_every") == 0 and self.step > 0
 
     @property
     def checkpoint_now(self):
@@ -326,7 +325,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 "accuracy": accuracy,
                 "examples": self.table,
                 "train_loss": loss,
-                "num_tokens": self.get("dataset/train/kwargs/max_seq_length")
+                "num_tokens": self.get("dataset/kwargs/max_seq_length")
                 * self.total_batch_size
                 * self.step,
             }
@@ -345,7 +344,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
+    @register_default_dispatch
     def run(self, training_state, tpu_job=None):
+        if self.get("run_training"):
+            self.train(training_state, tpu_job)
+        if self.get("run_evaluation"):
+            self.evaluate(training_state, tpu_job)
+
+    def train(self, training_state, tpu_job=None):
         self._build(training_state, tpu_job)
         self.model.train()
         for x in self.progress(self.train_loader, desc="Training", tag="train"):
@@ -365,28 +371,48 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.log_scalars_now and self.is_master_ordinal:
                 self.log(x, x_hat, self.tracker)
 
-            if self.validate_now:
-                self.validate()
-
             if self.checkpoint_now:
                 self.checkpoint(self.training_state)
         return self.training_state
 
-    def validate(self):
+    def evaluate(self):
         self.model.eval()
-        if not self.get("datsaets/validation"):
-            return
         with torch.no_grad():
-            # get list of outputs
-            outputs = run_evaluation(
-                self.model, self.valid_loaders, self.valid_tasks, self.tokenizer
+
+            outputs = []
+            for task_name, loader in self.eval_tasks.items():
+                for x in loader:
+                    del x["labels"]
+                    predictions = self.model.generate(**x)
+                    for pred in predictions:
+                        outputs.extend([self.tokenizer.decode(pred.tolist())])
+
+            cached_labels, cached_datasets, max_seq_length = get_targets_and_examples(
+                self.eval_datasets, self.eval_tasks
             )
 
-    __call__ = run
+            for task in self.eval_tasks:
+                # Extract the portion of decodes corresponding to this dataset
+                dataset_size = len(cached_labels[task.name])
+                predictions = [
+                    task.postprocess_fn(d, example=ex)
+                    for d, ex in zip(
+                        outputs[:dataset_size], self.eval_datasets[task.name]
+                    )
+                ]
+
+                for metric_fn in task.metric_fns:
+                    targets = cached_labels[task.name]
+                    metric_result = metric_fn(targets, predictions)
+                    for metric_name, metric_value in metric_result.items():
+                        tag = "eval/{}/{}".format(task.name, metric_name)
+                        print(f"{tag} {metric_value}")
+
+    __call__ = train
 
 
 def _mp_fn(index, args):
-    Trainer().run()
+    Trainer().train()
 
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
@@ -427,7 +453,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
         print("----------------")
         try:
-            # Only the chief returns a training state.
             job_output = tpu_job.wait(
                 timeout=self.get("job_timeout", default=None)
             )  # type: Union[TrainingState, JobTimeout]
@@ -436,12 +461,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     f"Chief Job has failed. The following object was"
                     f" returned: {job_output}"
                 )
-            if tpu_job.failed:
-                print(
-                    f"({tpu_job}) has reported "
-                    f"a failure by returning the following:\n{job_output}"
-                )
-
         finally:
             tpu_job.clean_up()
         return job_output
