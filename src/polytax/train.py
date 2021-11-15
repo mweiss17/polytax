@@ -67,6 +67,7 @@ from polytax.data.utils import (
     get_dataset,
     get_eval_datasets,
     get_targets_and_examples,
+    build_seqio_dataset,
 )
 from polytax.utils.utils import reduce_gradients
 from polytax.utils.train_state import TrainingState
@@ -124,30 +125,26 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_evaluation"):
             self._build_eval_tasks(training_state)
 
-    def _build_train_tasks(self, training_state: "TrainingState", device=None):
+    def _build_train_tasks(self, training_state: "TrainingState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
-        if device is None:
-            device = self.device
         self.train_loader = get_dataset(
             task=self.train_task,
             num_shards=self.num_shards,
             global_rank=self.global_rank,
             seed=self.get("seed"),
-            device=device,
+            device=self.device,
             **self.get("dataset/kwargs"),
         )
 
-    def _build_eval_tasks(self, training_state: "TrainingState", device=None):
+    def _build_eval_tasks(self, training_state: "TrainingState"):
         self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
-        if device is None:
-            device = self.device
 
         self.eval_datasets = get_eval_datasets(
             tasks=self.eval_tasks,
             num_shards=self.num_shards,
             global_rank=self.global_rank,
             seed=self.get("seed"),
-            device=device,
+            device=self.device,
             **self.get("dataset/kwargs"),
         )
 
@@ -533,7 +530,18 @@ if __name__ == "__main__":
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
         tpu_job = torch.load(tpu_job_buffer)
-        tpu_job.trainer._build_tasks(tpu_job.training_state)
+
+        task = get_task(**tpu_job.trainer.get("dataset/kwargs"))
+        max_seq_length = tpu_job.trainer.get("dataset/kwargs/max_seq_length")
+        sequence_length = {
+            "inputs": max_seq_length,
+            "targets": int(max_seq_length / 4),
+        }
+
+        dataset = build_seqio_dataset(
+            task, sequence_length, "train", seed=1, num_epochs=1
+        )
+
         xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
 
     else:
