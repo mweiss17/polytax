@@ -252,16 +252,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def checkpoint(self, training_state: "TrainingState"):
         checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
-
-        if xla_found and self.is_master_ordinal:
-            print(f"checkpointing the model to {checkpoint_path}")
-            self.tpu_job.training_state = training_state
-            self.tpu_job.upload()
-
-        else:
+        if not xla_found:
             print(f"checkpointing the model to {checkpoint_path}")
             buffer = training_state.serialize()
             torch.save(buffer, checkpoint_path)
+        elif xla_found and self.is_master_ordinal:
+            print(f"checkpointing the model to {checkpoint_path}")
+            self.tpu_job.training_state = training_state
+            self.tpu_job.upload()
+        else:
+            pass
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 1
@@ -529,19 +529,6 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
-        # tpu_job = torch.load(tpu_job_buffer)
-        #
-        # task = get_task(**tpu_job.trainer.get("dataset/kwargs"))
-        # max_seq_length = tpu_job.trainer.get("dataset/kwargs/max_seq_length")
-        # sequence_length = {
-        #     "inputs": max_seq_length,
-        #     "targets": int(max_seq_length / 4),
-        # }
-        #
-        # dataset = build_seqio_dataset(
-        #     task, sequence_length, "train", seed=1, num_epochs=1
-        # )
-
         xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
 
     else:

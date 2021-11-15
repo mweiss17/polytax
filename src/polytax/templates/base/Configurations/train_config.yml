@@ -6,13 +6,12 @@ seed: 12345
 distributed:
   backend: "GLOO" # use NCCL for GPU
 
-# Dataset and Batch Size
 dataset:
   kwargs:
-    name: "tiny_shakespeare"
+    name: "c4.en" # "glue_cola_v002"
     split: "train"
-    max_seq_length: 32
-    batch_size: 4 #per device
+    max_seq_length: 512
+    batch_size: 8
     use_iterable_ds: True
 
 #dataset:
@@ -85,4 +84,4 @@ tpu:
     netrange: "192.169.0.0/29"
     acc_type: "v2-8"
     preemptible: False
-#    name: "node-1"
+    name: "node-5"
