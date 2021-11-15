@@ -1,7 +1,7 @@
 dataset:
   kwargs:
     name: "c4.en" # "glue_cola_v002"
-    split: "validation"
+    split: "train"
     max_seq_length: 512
     batch_size: 8
     use_iterable_ds: True

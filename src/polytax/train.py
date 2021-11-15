@@ -411,8 +411,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     __call__ = train
 
 
-def _mp_fn(index, args):
-    Trainer().train()
+def _mp_fn(index, tpu_job_buffer):
+    tpu_job = torch.load(tpu_job_buffer)
+    trainer = deepcopy(tpu_job.trainer)
+    training_state = trainer(tpu_job.training_state, tpu_job)
 
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
@@ -447,7 +449,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             train_cmd,
             timeout=3600,
         )
-        breakpoint()
         tpu_job.upload()
         tpu_job.create()
         tpu_job.install()
@@ -529,11 +530,8 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
-        tpu_job = torch.load(tpu_job_buffer)
-        trainer = deepcopy(tpu_job.trainer)
-        training_state = trainer(tpu_job.training_state, tpu_job)
 
-        xmp.spawn(_mp_fn, args=({},), nprocs=8)
+        xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
 
     else:
         Nanny().run()
