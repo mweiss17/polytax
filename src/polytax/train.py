@@ -450,8 +450,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             timeout=3600,
         )
         tpu_job.upload()
-        # tpu_job.create()
-        # tpu_job.install()
+        tpu_job.create()
+        tpu_job.install()
         tpu_job.train()
 
         print("----------------")
@@ -475,26 +475,27 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             max_num_attempts = self.get_arg("max_timeout_retries", default=0)
             while True:
                 job_output = self._launch(trainer, training_state)
-                if TrainingState.is_instance(job_output):
-                    training_state = job_output
-                    break
-                elif JobStatus.is_instance(job_output):
-                    self.print("Job timed out. Trying again...")
-                    if num_attempts < max_num_attempts:
-                        # Try again
-                        num_attempts += 1
-                        continue
-                    else:
-                        # Job has timed out the max number of times allowed.
-                        raise TimeoutError(
-                            f"Job has timed out after {max_num_attempts} attempts. "
-                            f"The timeout is set to {self.get('job_timeout')}s."
-                        )
-                else:
-                    raise TypeError(
-                        f"Was expecting an output of type `TrainingState` "
-                        f"or `JobTimeout`, got one of type {type(job_output)} instead."
-                    )
+                # if TrainingState.is_instance(job_output):
+                #     training_state = job_output
+                #     break
+                # elif JobStatus.is_instance(job_output):
+                #     self.print("Job timed out. Trying again...")
+                #     if num_attempts < max_num_attempts:
+                #         # Try again
+                #         num_attempts += 1
+                #         continue
+                #     else:
+                #         # Job has timed out the max number of times allowed.
+                #         raise TimeoutError(
+                #             f"Job has timed out after {max_num_attempts} attempts. "
+                #             f"The timeout is set to {self.get('job_timeout')}s."
+                #         )
+                # else:
+                #     raise TypeError(
+                #         f"Was expecting an output of type `TrainingState` "
+                #         f"or `JobTimeout`, got one of type {type(job_output)} instead."
+                #     )
+                break
         else:
             training_state = trainer(training_state)
 
@@ -530,7 +531,8 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
-
+        tpu_job = TPUJob.from_buffer(tpu_job_buffer)
+        tpu_job.trainer._build_tasks(tpu_job.training_state)
         xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
 
     else:
