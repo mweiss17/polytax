@@ -124,25 +124,30 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_evaluation"):
             self._build_eval_tasks(training_state)
 
-    def _build_train_tasks(self, training_state: "TrainingState"):
+    def _build_train_tasks(self, training_state: "TrainingState", device=None):
         self.train_task = get_task(**self.get("dataset/kwargs"))
+        if device is None:
+            device = self.device
         self.train_loader = get_dataset(
             task=self.train_task,
             num_shards=self.num_shards,
             global_rank=self.global_rank,
             seed=self.get("seed"),
-            device=self.device,
+            device=device,
             **self.get("dataset/kwargs"),
         )
 
-    def _build_eval_tasks(self, training_state: "TrainingState"):
+    def _build_eval_tasks(self, training_state: "TrainingState", device=None):
         self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
+        if device is None:
+            device = self.device
+
         self.eval_datasets = get_eval_datasets(
             tasks=self.eval_tasks,
             num_shards=self.num_shards,
             global_rank=self.global_rank,
             seed=self.get("seed"),
-            device=self.device,
+            device=device,
             **self.get("dataset/kwargs"),
         )
 
@@ -368,6 +373,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.next_step()
             self.tracker.add(1)
 
+            # if xla_found and self.is_master_ordinal:
+            #     self.tpu_job.beat()
+
             if self.log_scalars_now and self.is_master_ordinal:
                 self.log(x, x_hat, self.tracker)
 
@@ -450,7 +458,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             timeout=3600,
         )
         tpu_job.upload()
-        # tpu_job.create()
+        tpu_job.create()
         tpu_job.install()
         tpu_job.train()
 
@@ -504,11 +512,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         self._epoch = training_state.epoch
         return training_state
 
-    # noinspection PyMethodOverriding
-    def checkpoint(self, training_state: "TrainingState") -> "TrainingState":
-        training_state.serialize(self.checkpoint_path)
-        return training_state
-
     @register_default_dispatch
     def train(self):
         self.initialize_wandb(resume=False)
@@ -517,9 +520,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         # Setup the epoch runner
         trainer = self.make_trainer()
         # Run it
-        training_state = self.launch(trainer, training_state)
-        # Checkpoint training state
-        self.checkpoint(training_state)
+        self.launch(trainer, training_state)
 
 
 if __name__ == "__main__":
