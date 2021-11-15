@@ -434,11 +434,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         from wormulon.core import TPU, TPUJob
 
         tpu = TPU(**self.get("tpu/kwargs"))
-        train_cmd = f"cd ~/polytax; python3 src/polytax/train.py "
         install_cmd = (
             f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
             f"pip install -e polytax[xla]; "
         )
+        train_cmd = f"python3 ~/polytax/src/polytax/train.py"
         tpu_job = TPUJob(
             self.wandb_run_id,
             self.experiment_directory,

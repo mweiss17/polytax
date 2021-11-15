@@ -7,21 +7,21 @@ distributed:
   backend: "GLOO" # use NCCL for GPU
 
 # Dataset and Batch Size
-#dataset:
-#  kwargs:
-#    name: "tiny_shakespeare"
-#    split: "train"
-#    max_seq_length: 32
-#    batch_size: 4 #per device
-#    use_iterable_ds: True
-
 dataset:
   kwargs:
-    name: "glue_v002_proportional" # "glue_cola_v002"
-    split: "validation"
+    name: "tiny_shakespeare"
+    split: "train"
     max_seq_length: 32
-    batch_size: 4
+    batch_size: 4 #per device
     use_iterable_ds: True
+#
+#dataset:
+#  kwargs:
+#    name: "glue_v002_proportional" # "glue_cola_v002"
+#    split: "validation"
+#    max_seq_length: 32
+#    batch_size: 4
+#    use_iterable_ds: True
 
 # Optimizer
 optim:
@@ -43,19 +43,18 @@ training:
 wandb:
   log_scalars_every: 1
 
-log_every: 200
-checkpoint_every: 10000
-valid_every: 50
-num_train_steps: 1000000
+valid_every: 1
+num_train_steps: 200
+num_eval_steps: 1
 
 # Logging
 use_wandb: True
 
 # Model Config
 model_config:
-  d_ff: 3072
-  d_kv: 64
-  d_model: 768
+  d_ff: 32
+  d_kv: 16
+  d_model: 32
   decoder_start_token_id: 0
   dropout_rate: 0.1
   eos_token_id: 1
@@ -64,17 +63,16 @@ model_config:
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
-  model_type: "t5"
-  num_decoder_layers: 12
-  num_heads: 12
-  num_layers: 12
+  model_type: "t5-xs"
+  num_decoder_layers: 1
+  num_heads: 2
+  num_layers: 1
   pad_token_id: 0
-  relative_attention_num_buckets: 32
+  relative_attention_num_buckets: 4
   transformers_version: "4.10.0.dev0"
   use_cache: false
   cache_dir: "/tmp/"
   vocab_size: 32003
-
 
 tpu:
   kwargs:
