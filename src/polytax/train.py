@@ -359,7 +359,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             loss = self.loss(x_hat.logits, x["labels"])
             loss.backward()
 
-            if (self.step + 1) % self.get("gradient_accumulation_steps", 1) != 0:
+            if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
                 reduce_gradients(xla_found, self.is_multi_host, self.optim)
                 self.optim.step()
                 self.optim.zero_grad()
@@ -450,21 +450,21 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             timeout=3600,
         )
         tpu_job.upload()
-        tpu_job.create()
-        tpu_job.install()
+        # tpu_job.create()
+        # tpu_job.install()
         tpu_job.train()
 
         print("----------------")
-        try:
-            job_output = tpu_job.wait()  # type: Union[TrainingState, JobTimeout]
-            if tpu_job.failed:
-                raise RuntimeError(
-                    f"Chief Job has failed. The following object was"
-                    f" returned: {job_output}"
-                )
-        finally:
-            tpu_job.clean_up()
-        return job_output
+        # try:
+        #     job_output = tpu_job.wait()  # type: Union[TrainingState, JobTimeout]
+        #     if tpu_job.failed:
+        #         raise RuntimeError(
+        #             f"Chief Job has failed. The following object was"
+        #             f" returned: {job_output}"
+        #         )
+        # finally:
+        #     tpu_job.clean_up()
+        # return job_output
 
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
