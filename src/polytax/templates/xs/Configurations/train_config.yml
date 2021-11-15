@@ -79,4 +79,4 @@ tpu:
     netrange: "192.169.0.0/29"
     acc_type: "v2-8"
     preemptible: False
-#    name: "node-2"
+    name: "node-3"

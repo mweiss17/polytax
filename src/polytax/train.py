@@ -450,7 +450,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             timeout=3600,
         )
         tpu_job.upload()
-        tpu_job.create()
+        # tpu_job.create()
         tpu_job.install()
         tpu_job.train()
 
@@ -531,7 +531,7 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
-        tpu_job = TPUJob.from_buffer(tpu_job_buffer)
+        tpu_job = torch.load(tpu_job_buffer)
         tpu_job.trainer._build_tasks(tpu_job.training_state)
         xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
 
