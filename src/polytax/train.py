@@ -202,7 +202,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     @property
     def is_multi_host(self):
-        return self.local_world_size > 1
+        return self.global_world_size > 1
 
     @property
     def total_batch_size(self):
@@ -529,18 +529,18 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
-        tpu_job = torch.load(tpu_job_buffer)
-
-        task = get_task(**tpu_job.trainer.get("dataset/kwargs"))
-        max_seq_length = tpu_job.trainer.get("dataset/kwargs/max_seq_length")
-        sequence_length = {
-            "inputs": max_seq_length,
-            "targets": int(max_seq_length / 4),
-        }
-
-        dataset = build_seqio_dataset(
-            task, sequence_length, "train", seed=1, num_epochs=1
-        )
+        # tpu_job = torch.load(tpu_job_buffer)
+        #
+        # task = get_task(**tpu_job.trainer.get("dataset/kwargs"))
+        # max_seq_length = tpu_job.trainer.get("dataset/kwargs/max_seq_length")
+        # sequence_length = {
+        #     "inputs": max_seq_length,
+        #     "targets": int(max_seq_length / 4),
+        # }
+        #
+        # dataset = build_seqio_dataset(
+        #     task, sequence_length, "train", seed=1, num_epochs=1
+        # )
 
         xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
 
