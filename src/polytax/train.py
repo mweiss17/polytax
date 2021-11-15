@@ -445,10 +445,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             training_state,
             install_cmd,
             train_cmd,
+            timeout=3600,
         )
-        # tpu_job.upload()
-        # tpu_job.create()
-        # tpu_job.install()
+        breakpoint()
+        tpu_job.upload()
+        tpu_job.create()
+        tpu_job.install()
         tpu_job.train()
 
         print("----------------")
