@@ -70,9 +70,11 @@ model_config:
   cache_dir: "/tmp/"
   vocab_size: 32003
 
+
+bucket: "must-results"
+
 tpu:
   kwargs:
-    bucket: "must-results"
     zone: "us-central1-f"
     network: "tpu-network"
     subnet: "swarm-2"

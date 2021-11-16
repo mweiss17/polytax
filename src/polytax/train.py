@@ -423,7 +423,7 @@ def _mp_fn(index, tpu_job_buffer):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax"
+    WANDB_PROJECT = "polytax-runs"
 
     def __init__(self):
         super(Nanny, self).__init__()
@@ -435,32 +435,28 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        from wormulon.core import TPU, TPUJob  # , TPUCluster
+        from wormulon.core import TPU, TPUJob, TPUCluster
 
-        # cluster = TPUCluster(
-        #     self.WANDB_ENTITY, self.WANDB_PROJECT, **self.get("tpu/kwargs")
-        # )
-        # cluster.get_running_jobs()
-        tpu = TPU(**self.get("tpu/kwargs"))
+        cluster = TPUCluster(
+            self.WANDB_ENTITY, self.WANDB_PROJECT, **self.get("tpu/kwargs")
+        )
+        tpu = cluster.get_available_tpu()
         install_cmd = (
             f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
             f"pip install -e polytax[xla]; "
         )
-        train_cmd = f"python3 ~/polytax/src/polytax/train.py"
-        tpu_job = TPUJob(
+        train_cmd = f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')}"
+        job = TPUJob(
             self.wandb_run_id,
             self.experiment_directory,
-            tpu,
+            self.get("bucket"),
             trainer,
             training_state,
             install_cmd,
             train_cmd,
             timeout=3600,
         )
-        tpu_job.upload()
-        # tpu_job.create()
-        tpu_job.install()
-        tpu_job.train()
+        tpu.run(job, root_path="~/polytax/", overwrite=True)
 
         print("----------------")
         # try:
@@ -528,11 +524,11 @@ if __name__ == "__main__":
 
         parser = argparse.ArgumentParser()
         parser.add_argument("bucket", type=str)
-        parser.add_argument("tpu_job_path", type=str)
+        parser.add_argument("path", type=str)
         args = parser.parse_args()
 
-        tpu_job_buffer = _read_blob_gcs(args.bucket, args.tpu_job_path)
-        xmp.spawn(_mp_fn, args=(tpu_job_buffer,), nprocs=8)
+        buffer = _read_blob_gcs(args.bucket, args.path)
+        xmp.spawn(_mp_fn, args=(buffer,), nprocs=8)
 
     else:
         Nanny().run()
