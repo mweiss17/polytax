@@ -67,7 +67,6 @@ from polytax.data.utils import (
     get_dataset,
     get_eval_datasets,
     get_targets_and_examples,
-    build_seqio_dataset,
 )
 from polytax.utils.utils import reduce_gradients
 from polytax.utils.train_state import TrainingState
@@ -356,7 +355,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, training_state, tpu_job=None):
         self._build(training_state, tpu_job)
         self.model.train()
-        for x in self.progress(self.train_loader, desc="Training", tag="train"):
+        for x in self.train_loader:
             x_hat = self.model(**x)
             loss = self.loss(x_hat.logits, x["labels"])
             loss.backward()
@@ -436,8 +435,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        from wormulon.core import TPU, TPUJob
+        from wormulon.core import TPU, TPUJob  # , TPUCluster
 
+        # cluster = TPUCluster(
+        #     self.WANDB_ENTITY, self.WANDB_PROJECT, **self.get("tpu/kwargs")
+        # )
+        # cluster.get_running_jobs()
         tpu = TPU(**self.get("tpu/kwargs"))
         install_cmd = (
             f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
@@ -455,7 +458,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             timeout=3600,
         )
         tpu_job.upload()
-        tpu_job.create()
+        # tpu_job.create()
         tpu_job.install()
         tpu_job.train()
 

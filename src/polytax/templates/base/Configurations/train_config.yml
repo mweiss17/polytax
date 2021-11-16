@@ -1,5 +1,5 @@
 run_training: True
-run_evaluation: True
+run_evaluation: False
 seed: 12345
 
 # Multi-host
@@ -36,11 +36,11 @@ optim:
 
 # Steps
 training:
-  checkpoint_every: 1
+  checkpoint_every: 100
 
 # Steps
 wandb:
-  log_scalars_every: 1
+  log_scalars_every: 10
 
 log_every: 200
 checkpoint_every: 10000
@@ -84,4 +84,4 @@ tpu:
     netrange: "192.169.0.0/29"
     acc_type: "v2-8"
     preemptible: False
-    name: "node-5"
+#    name: "node-3"
