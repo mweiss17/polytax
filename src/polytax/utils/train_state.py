@@ -36,7 +36,11 @@ class TrainingState(object):
             "schedulers_state_dict": self.schedulers_state_dict,
         }
         buffer = io.BytesIO()
-        torch.save(states, buffer)
+        if xm is not None:
+            xm.save(states, buffer)
+        else:
+            torch.save(states, buffer)
+
         return buffer.getvalue()
 
     @classmethod

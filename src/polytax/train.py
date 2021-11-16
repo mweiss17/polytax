@@ -252,11 +252,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def checkpoint(self, training_state: "TrainingState"):
         checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
         if not xla_found:
-            print(f"checkpointing the model to {checkpoint_path}")
             buffer = training_state.serialize()
             torch.save(buffer, checkpoint_path)
         elif xla_found and self.is_master_ordinal:
-            print(f"checkpointing the model to {checkpoint_path}")
             self.tpu_job.training_state = training_state
             self.tpu_job.upload()
         else:
@@ -410,15 +408,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     metric_result = metric_fn(targets, predictions)
                     for metric_name, metric_value in metric_result.items():
                         tag = "eval/{}/{}".format(task.name, metric_name)
-                        print(f"{tag} {metric_value}")
+                        # print(f"{tag} {metric_value}")
 
     __call__ = train
-
-
-def _mp_fn(index, tpu_job_buffer):
-    tpu_job = torch.load(tpu_job_buffer)
-    trainer = deepcopy(tpu_job.trainer)
-    training_state = trainer(tpu_job.training_state, tpu_job)
 
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
@@ -440,7 +432,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         cluster = TPUCluster(
             self.WANDB_ENTITY, self.WANDB_PROJECT, **self.get("tpu/kwargs")
         )
-        tpu = cluster.get_available_tpu()
+        tpu = cluster.get_available_tpu(self.wandb_run_id)
         install_cmd = (
             f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
             f"pip install -e polytax[xla]; "
@@ -458,7 +450,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         )
         tpu.run(job, root_path="~/polytax/", overwrite=True)
 
-        print("----------------")
+        # print("----------------")
         # try:
         #     job_output = tpu_job.wait()  # type: Union[TrainingState, JobTimeout]
         #     if tpu_job.failed:
@@ -517,6 +509,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         trainer = self.make_trainer()
         # Run it
         self.launch(trainer, training_state)
+
+
+def _mp_fn(index, tpu_job_buffer):
+    tpu_job = torch.load(tpu_job_buffer)
+    trainer = deepcopy(tpu_job.trainer)
+    training_state = trainer(tpu_job.training_state, tpu_job)
 
 
 if __name__ == "__main__":
