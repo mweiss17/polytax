@@ -254,11 +254,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if not xla_found:
             buffer = training_state.serialize()
             torch.save(buffer, checkpoint_path)
-        elif xla_found and self.is_master_ordinal:
+        elif xla_found:
             self.tpu_job.training_state = training_state
             self.tpu_job.upload()
-        else:
-            pass
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 1
@@ -373,7 +371,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.log_scalars_now and self.is_master_ordinal:
                 self.log(x, x_hat, self.tracker)
 
-            if self.checkpoint_now:
+            if self.checkpoint_now and self.is_master_ordinal:
                 self.checkpoint(self.training_state)
         return self.training_state
 
