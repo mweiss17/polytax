@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import io
+import sys
 import wandb
 import argparse
 from copy import deepcopy
@@ -304,12 +305,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             return
 
         # Write speeds to wandb
-        self.wandb_log(
-            **{
-                "instantaneous it/s": tracker.rate(),
-                "global it/s": tracker.global_rate(),
-            }
-        )
+        rate = {
+            "instantaneous it/s": tracker.rate(),
+            "global it/s": tracker.global_rate(),
+        }
+        self.wandb_log(**rate)
 
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
@@ -317,16 +317,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"]
         )
         self.table.add_data(step, accuracy, loss, input, label, pred)
-        self.wandb_log(
-            **{
-                "accuracy": accuracy,
-                "examples": self.table,
-                "train_loss": loss,
-                "num_tokens": self.get("dataset/kwargs/max_seq_length")
-                * self.total_batch_size
-                * self.step,
-            }
-        )
+        results = {
+            "accuracy": accuracy,
+            "examples": self.table,
+            "train_loss": loss,
+            "num_tokens": self.get("dataset/kwargs/max_seq_length")
+            * self.total_batch_size
+            * self.step,
+        }
+        self.wandb_log(**results)
+        results.update(rate)
+        print(results)
 
     def log(self, x, x_hat, tracker):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
@@ -513,6 +514,7 @@ def _mp_fn(index, tpu_job_buffer):
     tpu_job = torch.load(tpu_job_buffer)
     trainer = deepcopy(tpu_job.trainer)
     training_state = trainer(tpu_job.training_state, tpu_job)
+    sys.exit(21)
 
 
 if __name__ == "__main__":
