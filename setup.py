@@ -30,7 +30,7 @@ setuptools.setup(
     packages=setuptools.find_packages(where="src"),
     python_requires=">=3.7",
     install_requires=[
-        "torch==1.9.1",
+        "torch==1.10.0",
         "numpy",
         "tensorboardX",
         "tensorflow==2.6.0",
@@ -54,7 +54,7 @@ setuptools.setup(
     ],
     extras_require={
         "xla": [
-            "torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.9-cp38-cp38-linux_x86_64.whl"
+            "torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl"
         ],
     },
 )

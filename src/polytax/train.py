@@ -334,12 +334,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         }
         self.wandb_log(**results)
         results.update(rate)
-        print(results)
+        print(results, flush=True)
 
     def log(self, x, x_hat, tracker):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
         if xla_found:
-            xm.add_step_closure(self._log, args=(self.step, tracker, x, x_hat))
+            xm.add_step_closure(
+                self._log, args=(self.step, tracker, x, x_hat), run_async=True
+            )
         # Otherwise just call the function to log directly
         else:
             self._log(self.step, tracker, x, x_hat)
@@ -359,8 +361,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, training_state, tpu_job=None):
         self._build(training_state, tpu_job)
         self.model.train()
-        if xla_found:
-            xm.master_print("starting to train")
+
         for x in self.train_loader:
             x_hat = self.model(**x)
             loss = self.loss(x_hat.logits, x["labels"])
@@ -383,8 +384,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
             if self.checkpoint_now:
                 self.checkpoint(self.training_state)
-        if xla_found:
-            xm.master_print("done training")
 
         return self.training_state
 

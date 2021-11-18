@@ -11,7 +11,7 @@ dataset:
     name: "c4.en" # "glue_cola_v002"
     split: "train"
     max_seq_length: 512
-    batch_size: 8
+    batch_size: 8 # per device
     use_iterable_ds: True
 
 #dataset:
