@@ -71,7 +71,6 @@ model_config:
   vocab_size: 32003
 
 
-bucket: "must-results"
 
 tpu:
   kwargs:
@@ -81,3 +80,6 @@ tpu:
     netrange: "192.169.0.0/29"
     acc_type: "v2-8"
     preemptible: False
+    bucket: "must-results"
+  env_kwargs:
+

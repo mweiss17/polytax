@@ -38,6 +38,7 @@ from transformers import (
     T5ForConditionalGeneration,
     SwitchForConditionalGeneration,
     T5Config,
+    SwitchConfig,
     set_seed,
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
@@ -162,13 +163,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.get("model_config")["layer_norm_epsilon"]
         )
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
-        model_config = T5Config.from_dict(self.get("model_config"),)
-
-        if "switch" in model_config.model_type:
+        if "switch" in self.get("model_config/model_type"):
+            model_config = SwitchConfig.from_dict(self.get("model_config"))
             self.model = SwitchForConditionalGeneration(model_config)
         else:
+            model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
-
         training_state.load_in_model(self.model)
         self.model.to(self.device)
 
