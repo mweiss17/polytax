@@ -22,14 +22,15 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import io
-import sys
 import wandb
 import argparse
 from copy import deepcopy
 from typing import Union
 import torch
-from wormulon.core import TPUJob
-from wormulon.utils import JobStatus, _read_blob_gcs
+from wormulon.utils import JobStatus
+from wormulon.tpu import TPUJob
+from wormulon.tpu_manager import TPUZoneManager
+from wormulon.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -38,6 +39,7 @@ from transformers import (
     T5ForConditionalGeneration,
     SwitchForConditionalGeneration,
     T5Config,
+    SwitchConfig,
     set_seed,
 )
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
@@ -93,9 +95,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
-    def _build(self, training_state: "TrainingState", tpu_job: "TPUJob"):
+    def _build(self, training_state: "TrainingState"):
         print(f"{self._config}")
-        self.tpu_job = tpu_job
         self._build_general(training_state)
         self._build_tasks(training_state)
         self._build_model(training_state)
@@ -109,7 +110,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Builds the local directory structure.
         self.experiment_directory = self._experiment_directory
         os.environ["WANDB_RUN_ID"] = self.WANDB_RUN_ID
-
+        self.bucket = Bucket(self.get("bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
         if self.is_master_ordinal:
@@ -162,13 +163,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.get("model_config")["layer_norm_epsilon"]
         )
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
-        model_config = T5Config.from_dict(self.get("model_config"),)
-
-        if "switch" in model_config.model_type:
+        if "switch" in self.get("model_config/model_type"):
+            model_config = SwitchConfig.from_dict(self.get("model_config"))
             self.model = SwitchForConditionalGeneration(model_config)
         else:
+            model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
-
         training_state.load_in_model(self.model)
         self.model.to(self.device)
 
@@ -257,14 +257,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             misc_attributes=misc_attributes,
         )
 
-    def checkpoint(self, training_state: "TrainingState"):
-        checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
+    def checkpoint(self):
+        buffer = self.training_state.serialize()
         if xla_found:
-            self.tpu_job.training_state = training_state
-            self.tpu_job.upload()
+            path = f"{self.experiment_directory}/trainstate-{self.get('dataset/kwargs/name')}-{self.step}.pt"
+            self.bucket.upload(buffer, path, overwrite=True)
         else:
-            buffer = training_state.serialize()
-            torch.save(buffer, checkpoint_path)
+            path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
+            torch.save(buffer, path)
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 0
@@ -352,40 +352,37 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return loss
 
     @register_default_dispatch
-    def run(self, training_state, tpu_job=None):
-        if self.get("run_training"):
-            self.train(training_state, tpu_job)
-        if self.get("run_evaluation"):
-            self.evaluate(training_state, tpu_job)
+    def run(self, training_state):
+        self._build(training_state)
 
-    def train(self, training_state, tpu_job=None):
-        self._build(training_state, tpu_job)
+        if self.get("run_training"):
+            for x in self.train_loader:
+                self.train(x, training_state)
+                if self.get("run_evaluation"):
+                    self.evaluate(training_state)
+        return training_state
+
+    def train(self, x):
         self.model.train()
 
-        for x in self.train_loader:
-            x_hat = self.model(**x)
-            loss = self.loss(x_hat.logits, x["labels"])
-            loss.backward()
+        x_hat = self.model(**x)
+        loss = self.loss(x_hat.logits, x["labels"])
+        loss.backward()
 
-            if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-                reduce_gradients(xla_found, self.is_multi_host, self.optim)
-                self.optim.step()
-                self.optim.zero_grad()
+        if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
+            reduce_gradients(xla_found, self.is_multi_host, self.optim)
+            self.optim.step()
+            self.optim.zero_grad()
 
-            # Increment step count
-            self.next_step()
-            self.tracker.add(1)
+        # Increment step count
+        self.next_step()
+        self.tracker.add(1)
 
-            # if xla_found and self.is_master_ordinal:
-            #     self.tpu_job.beat()
+        if self.log_scalars_now and self.is_master_ordinal:
+            self.log(x, x_hat, self.tracker)
 
-            if self.log_scalars_now and self.is_master_ordinal:
-                self.log(x, x_hat, self.tracker)
-
-            if self.checkpoint_now:
-                self.checkpoint(self.training_state)
-
-        return self.training_state
+        if self.checkpoint_now:
+            self.checkpoint()
 
     def evaluate(self):
         self.model.eval()
@@ -420,6 +417,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         tag = "eval/{}/{}".format(task.name, metric_name)
                         # print(f"{tag} {metric_value}")
 
+    def finish(self):
+        if xm.is_master_ordinal():
+            wandb.finish()
+        xm.rendezvous("finished run.")
+
+    def beat(self):
+        import time
+
+        data = torch.dumps({"last_heartbeat": time.time()})
+        self.bucket.upload(self.prefix + "heartbeat.pt", data)
+
     __call__ = train
 
 
@@ -437,12 +445,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        from wormulon.core import TPUJob, TPUCluster
 
-        cluster = TPUCluster(
-            self.WANDB_ENTITY, self.WANDB_PROJECT, **self.get("tpu/kwargs")
-        )
-        tpu = cluster.get_available_tpu(self.wandb_run_id)
+        manager = TPUZoneManager(**self.get("tpu/kwargs"))
+        tpu = manager.get_available_tpu()
+        tpu.submit(trainer, training_state, **self.get("tpu/env_kwargs"))
+
         job = TPUJob(
             self.wandb_run_id,
             self.experiment_directory,
