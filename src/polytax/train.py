@@ -252,15 +252,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def checkpoint(self, training_state: "TrainingState"):
         checkpoint_path = f"{self.experiment_directory}/Weights/model-{self.step}.pt"
-        buffer = training_state.serialize()
-        xm.save(buffer, checkpoint_path)
 
-        # if not xla_found:
-        #     buffer = training_state.serialize()
-        #     torch.save(buffer, checkpoint_path)
-        # elif xla_found:
-        #     self.tpu_job.training_state = training_state
-        #     self.tpu_job.upload()
+        if not xla_found:
+            buffer = training_state.serialize()
+            torch.save(buffer, checkpoint_path)
+        elif xla_found:
+            self.tpu_job.training_state = training_state
+            self.tpu_job.upload()
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 1
