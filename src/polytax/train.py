@@ -267,7 +267,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             torch.save(buffer, checkpoint_path)
 
     def decode_and_compute_accuracy(self, x, x_hat):
-        sample_id = 1
+        sample_id = 0
         labels = x["labels"][sample_id]
         labels_list = labels.cpu().numpy().tolist()
         input_ids = x["input_ids"][sample_id].cpu().numpy().tolist()
