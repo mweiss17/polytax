@@ -510,7 +510,8 @@ def _mp_fn(index, tpu_job_buffer):
     tpu_job = torch.load(tpu_job_buffer)
     trainer = deepcopy(tpu_job.trainer)
     training_state = trainer(tpu_job.training_state, tpu_job)
-    sys.exit(21)
+    trainer.wandb_run.finish()
+    sys.exit(0)
 
 
 if __name__ == "__main__":
