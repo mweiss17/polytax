@@ -376,6 +376,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
             if self.checkpoint_now:
                 self.checkpoint(self.training_state)
+        if xla_found:
+            xm.master_print("done training")
+
         return self.training_state
 
     def evaluate(self):
