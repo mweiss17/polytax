@@ -352,7 +352,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, training_state, tpu_job=None):
         self._build(training_state, tpu_job)
         self.model.train()
-        print("starting to train")
+        if xla_found:
+            xm.master_print("starting to train")
         for x in self.train_loader:
             x_hat = self.model(**x)
             loss = self.loss(x_hat.logits, x["labels"])
@@ -523,6 +524,6 @@ if __name__ == "__main__":
 
         buffer = _read_blob_gcs(args.bucket, args.path)
         xmp.spawn(_mp_fn, args=(buffer,), nprocs=8)
-
+        sys.exit(0)
     else:
         Nanny().run()
