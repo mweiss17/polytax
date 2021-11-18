@@ -474,9 +474,10 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         train_cmd = (
             f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')} {job.path}"
         )
-        tpu.ssh(train_cmd)
+        tpu.ssh(train_cmd, synchronous=False, timeout=15)
 
-        # print("----------------")
+        print("----------------")
+        print("after train command issued")
         try:
             job_output = job.wait()
             if job.failed:
@@ -485,7 +486,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 )
         finally:
             print("cleaning up job")
-            job.clean_up()
+            tpu.clean_up()
         return job_output
 
     def launch(
