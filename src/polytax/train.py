@@ -509,6 +509,7 @@ def _mp_fn(index, tpu_job_buffer):
     trainer = deepcopy(tpu_job.trainer)
     training_state = trainer(tpu_job.training_state, tpu_job)
     trainer.wandb_run.finish()
+    xm.rendezvous("checking_out")
     sys.exit(0)
 
 
