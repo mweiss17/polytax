@@ -355,6 +355,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, training_state, tpu_job=None):
         self._build(training_state, tpu_job)
         self.model.train()
+        print("starting to train")
         for x in self.train_loader:
             x_hat = self.model(**x)
             loss = self.loss(x_hat.logits, x["labels"])
@@ -429,40 +430,56 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def _launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> Union[TrainingState, JobStatus]:
-        from wormulon.core import TPU, TPUJob, TPUCluster
+        from wormulon.core import TPUJob, TPUCluster
 
         cluster = TPUCluster(
             self.WANDB_ENTITY, self.WANDB_PROJECT, **self.get("tpu/kwargs")
         )
         tpu = cluster.get_available_tpu(self.wandb_run_id)
-        install_cmd = (
-            f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
-            f"pip install -e polytax[xla]; "
-        )
-        train_cmd = f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')}"
         job = TPUJob(
             self.wandb_run_id,
             self.experiment_directory,
             self.get("bucket"),
             trainer,
             training_state,
-            install_cmd,
-            train_cmd,
             timeout=3600,
         )
-        tpu.run(job, root_path="~/polytax/", overwrite=True)
+        root_path = "~/polytax/"
+        # update the configuration on wandb noting this tpu's name
+        job.trainer._config["tpu_name"] = tpu.name
+        job.trainer.update_wandb_config()
+
+        # upload the job to GCP storage
+        job.upload(overwrite=True)
+
+        # Try to step into the job's directory and pull (in case it's old)
+        if root_path is not None:
+            tpu.ssh(f"cd {root_path} && git pull origin master")
+            tpu.ssh(f"cd {root_path} && pip install -e .")
+            tpu.ssh("pkill -9 python3")
+
+        install_cmd = (
+            f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
+            f"pip install -e polytax[xla]; "
+        )
+        train_cmd = (
+            f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')} {tpu.path}"
+        )
+
+        # Install the job on the TPU
+        tpu.ssh(install_cmd)
+        tpu.ssh(train_cmd)
 
         # print("----------------")
-        # try:
-        #     job_output = tpu_job.wait()  # type: Union[TrainingState, JobTimeout]
-        #     if tpu_job.failed:
-        #         raise RuntimeError(
-        #             f"Chief Job has failed. The following object was"
-        #             f" returned: {job_output}"
-        #         )
-        # finally:
-        #     tpu_job.clean_up()
-        # return job_output
+        try:
+            job_output = job.wait()
+            if job.failed:
+                raise RuntimeError(
+                    f"Job has failed. The following object was returned: {job_output}"
+                )
+        finally:
+            job.clean_up()
+        return job_output
 
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
@@ -471,29 +488,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             # Try again if timed out
             num_attempts = 0
             max_num_attempts = self.get_arg("max_timeout_retries", default=0)
-            while True:
-                job_output = self._launch(trainer, training_state)
-                # if TrainingState.is_instance(job_output):
-                #     training_state = job_output
-                #     break
-                # elif JobStatus.is_instance(job_output):
-                #     self.print("Job timed out. Trying again...")
-                #     if num_attempts < max_num_attempts:
-                #         # Try again
-                #         num_attempts += 1
-                #         continue
-                #     else:
-                #         # Job has timed out the max number of times allowed.
-                #         raise TimeoutError(
-                #             f"Job has timed out after {max_num_attempts} attempts. "
-                #             f"The timeout is set to {self.get('job_timeout')}s."
-                #         )
-                # else:
-                #     raise TypeError(
-                #         f"Was expecting an output of type `TrainingState` "
-                #         f"or `JobTimeout`, got one of type {type(job_output)} instead."
-                #     )
-                break
+            job_output = self._launch(trainer, training_state)
         else:
             training_state = trainer(training_state)
 

@@ -37,11 +37,11 @@ optim:
 
 # Steps
 training:
-  checkpoint_every: 100
+  checkpoint_every: 3
 
 # Steps
 wandb:
-  log_scalars_every: 100
+  log_scalars_every: 1
 
 # Logging
 use_wandb: True
@@ -81,4 +81,3 @@ tpu:
     netrange: "192.169.0.0/29"
     acc_type: "v2-8"
     preemptible: False
-#    name: "node-3"
