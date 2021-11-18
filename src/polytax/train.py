@@ -120,10 +120,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 dist.init_process_group(backend=self.get("distributed/backend"))
 
     def _build_tasks(self, training_state: "TrainingState"):
+
+        # if not xm.is_master_ordinal():
+        #     xm.rendezvous("download_only_once")
+
         if self.get("run_training"):
             self._build_train_tasks(training_state)
         if self.get("run_evaluation"):
             self._build_eval_tasks(training_state)
+
+        # if xm.is_master_ordinal():
+        #     xm.rendezvous("download_only_once")
 
     def _build_train_tasks(self, training_state: "TrainingState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
@@ -511,10 +518,10 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 def _mp_fn(index, tpu_job_buffer):
     tpu_job = torch.load(tpu_job_buffer)
     trainer = deepcopy(tpu_job.trainer)
-    training_state = trainer(tpu_job.training_state, tpu_job)
-    trainer.wandb_run.finish()
-    xm.rendezvous("checking_out")
-    sys.exit(0)
+    trainer(tpu_job.training_state, tpu_job)
+    if xm.is_master_ordinal():
+        wandb.finish()
+    xm.rendezvous("finished run.")
 
 
 if __name__ == "__main__":
@@ -526,7 +533,6 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         buffer = _read_blob_gcs(args.bucket, args.path)
-        xmp.spawn(_mp_fn, args=(buffer,), nprocs=8)
-        sys.exit(0)
+        xmp.spawn(_mp_fn, args=(buffer,), nprocs=8, start_method="fork")
     else:
         Nanny().run()
