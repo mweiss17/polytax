@@ -54,7 +54,8 @@ setuptools.setup(
     ],
     extras_require={
         "xla": [
-            "torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl"
+            "torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl",
+            "jax @ jax[tpu]>=0.2.16",
         ],
     },
 )
