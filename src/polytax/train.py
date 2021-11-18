@@ -376,7 +376,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.log_scalars_now and self.is_master_ordinal:
                 self.log(x, x_hat, self.tracker)
 
-            if self.checkpoint_now and self.is_master_ordinal:
+            if self.checkpoint_now:
                 self.checkpoint(self.training_state)
         return self.training_state
 
@@ -444,30 +444,28 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             training_state,
             timeout=3600,
         )
-        root_path = "~/polytax/"
+
         # update the configuration on wandb noting this tpu's name
         job.trainer._config["tpu_name"] = tpu.name
         job.trainer.update_wandb_config()
-
         # upload the job to GCP storage
         job.upload(overwrite=True)
 
         # Try to step into the job's directory and pull (in case it's old)
-        if root_path is not None:
-            tpu.ssh(f"cd {root_path} && git pull origin master")
-            tpu.ssh(f"cd {root_path} && pip install -e .")
-            tpu.ssh("pkill -9 python3")
+        root_path = "~/polytax/"
+        tpu.ssh(f"cd {root_path} && git pull origin master")
+        tpu.ssh(f"cd {root_path} && pip install -e .")
+        tpu.ssh("pkill -9 python3")
 
         install_cmd = (
             f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
             f"pip install -e polytax[xla]; "
         )
-        train_cmd = (
-            f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')} {tpu.path}"
-        )
-
-        # Install the job on the TPU
         tpu.ssh(install_cmd)
+
+        train_cmd = (
+            f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')} {job.path}"
+        )
         tpu.ssh(train_cmd)
 
         # print("----------------")
