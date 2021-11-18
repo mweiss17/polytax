@@ -474,6 +474,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     f"Job has failed. The following object was returned: {job_output}"
                 )
         finally:
+            print("cleaning up job")
             job.clean_up()
         return job_output
 
