@@ -456,7 +456,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         # Try to step into the job's directory and pull (in case it's old)
         root_path = "~/polytax/"
         tpu.ssh(f"cd {root_path} && git pull origin master")
-        tpu.ssh(f"cd {root_path} && pip install -e .")
+        tpu.ssh(f"cd {root_path} && pip install -e .[xla]")
         tpu.ssh("pkill -9 python3")
 
         install_cmd = (
