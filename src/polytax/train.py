@@ -25,11 +25,8 @@ import io
 import wandb
 import argparse
 from copy import deepcopy
-from typing import Union
 import torch
-from wormulon.utils import JobStatus
-from wormulon.tpu import TPUJob
-from wormulon.tpu_manager import TPUZoneManager
+from wormulon.tpu_manager import TPUManager, TPUJob
 from wormulon.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
@@ -437,67 +434,36 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def make_trainer(self):
         return Trainer(self)
 
-    def _launch(
-        self, trainer: "Trainer", training_state: "TrainingState",
-    ) -> Union[TrainingState, JobStatus]:
-
-        manager = TPUZoneManager(**self.get("tpu/kwargs"))
-        tpu = manager.get_available_tpu()
-        tpu.submit(trainer, training_state, **self.get("tpu/env_kwargs"))
-
-        job = TPUJob(
-            self.wandb_run_id,
-            self.experiment_directory,
-            self.get("bucket"),
-            trainer,
-            training_state,
-            timeout=3600,
-        )
-
-        # update the configuration on wandb noting this tpu's name
-        job.trainer._config["tpu_name"] = tpu.name
-        job.trainer.update_wandb_config()
-        # upload the job to GCP storage
-        job.upload(overwrite=True)
-
-        # Try to step into the job's directory and pull (in case it's old)
-        root_path = "~/polytax/"
-        tpu.ssh(f"cd {root_path} && git pull origin master")
-        tpu.ssh(f"cd {root_path} && pip install -e .[xla]")
-        tpu.ssh("pkill -9 python3")
-
-        install_cmd = (
-            f"cd ~/; git clone https://github.com/mweiss17/polytax.git; "
-            f"pip install -e polytax[xla]; "
-        )
-        tpu.ssh(install_cmd)
-
-        train_cmd = (
-            f"python3 ~/polytax/src/polytax/train.py {self.get('bucket')} {job.path}"
-        )
-        tpu.ssh(train_cmd, synchronous=False, timeout=15)
-
-        print("----------------")
-        print("after train command issued")
-        try:
-            job_output = job.wait()
-            if job.failed:
-                raise RuntimeError(
-                    f"Job has failed. The following object was returned: {job_output}"
-                )
-        finally:
-            print("cleaning up job")
-            tpu.clean_up()
-        return job_output
-
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> "TrainingState":
         if self.get("use_tpu", False):
-            # Try again if timed out
-            num_attempts = 0
-            max_num_attempts = self.get_arg("max_timeout_retries", default=0)
-            job_output = self._launch(trainer, training_state)
+            # Add the wandb key to the config
+            self.get("job/kwargs")["env_stmts"].append(
+                f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']};"
+            )
+
+            manager = TPUManager(**self.get("tpu/kwargs"))
+            job = TPUJob(
+                self.experiment_directory,
+                trainer,
+                training_state,
+                **self.get("job/kwargs"),
+            )
+
+            handler = manager.launch(job)
+
+            print("----------------")
+
+            try:
+                job_output = job.wait()
+                if job.failed:
+                    raise RuntimeError(
+                        f"Job has failed. The following object was returned: {job_output}"
+                    )
+            finally:
+                print("cleaning up job")
+                tpu.clean_up()
         else:
             training_state = trainer(training_state)
 

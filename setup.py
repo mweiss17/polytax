@@ -1,12 +1,4 @@
-import os
-import subprocess
 import setuptools
-
-
-def execute(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE)
-    output, error = process.communicate()
-    return output, error
 
 
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -44,6 +36,8 @@ setuptools.setup(
         "tbp-nightly",
         "google-cloud",
         "wandb",
+        "stopit",
+        "addict",
         "tensorboardX",
         "dill",
         "google-cloud-storage",
@@ -59,30 +53,3 @@ setuptools.setup(
         ],
     },
 )
-#
-# # If XLA is installed, then we setup some TPU-specific environment stuff
-# try:
-#     import torch_xla
-#
-#     print("XLA support enabled")
-#     key, err = execute(
-#         [
-#             "curl",
-#             "http://metadata.google.internal/computeMetadata/v1/project/attributes/wandb_api_key",
-#             "-H",
-#             "Metadata-Flavor: Google",
-#         ]
-#     )
-#     os.putenv("WANDB_API_KEY", key.decode("utf-8"))
-#     user = os.environ["USER"]
-#     with open(f"/home/{user}/.bashrc", "a") as f:
-#         f.write(f"export WANDB_API_KEY={key.decode('utf-8')}\n")
-#         f.write('export XRT_TPU_CONFIG="localservice;0;localhost:51011"\n')
-#         f.write("export PATH=$PATH:/home/$USER/.local/bin\n")
-#         f.write("unset LD_PRELOAD\n")
-#     output, err = execute(
-#         'git config --global user.email "martin.clyde.weiss@gmail.com"'.split()
-#     )
-#     output, err = execute('git config --global user.name "Martin Weiss"'.split())
-# except ImportError:
-#     pass

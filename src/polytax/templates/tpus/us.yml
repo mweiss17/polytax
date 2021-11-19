@@ -1,0 +1,10 @@
+tpu:
+  kwargs:
+    zone: "us-central1-f"
+    network: "tpu-network"
+    subnet: "swarm-2"
+    netrange: "192.169.0.0/29"
+    acc_type: "v2-8"
+    preemptible: False
+    bucket: "must-results"
+    project: "polytax"
