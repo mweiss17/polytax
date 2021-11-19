@@ -311,30 +311,25 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if not self.get("use_wandb"):
             return
 
-        # Write speeds to wandb
-        rate = {
-            "instantaneous it/s": tracker.rate(),
-            "global it/s": tracker.global_rate(),
-        }
-        self.wandb_log(**rate)
-
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
-        self.table = wandb.Table(
-            columns=["Step", "Accuracy", "Loss", "Input", "Label", "Predicted"]
-        )
-        self.table.add_data(step, accuracy, loss, input, label, pred)
         results = {
+            "step": step,
             "accuracy": accuracy,
-            "examples": self.table,
+            "input_examples": input,
+            "label": label,
+            "pred": pred,
             "train_loss": loss,
             "num_tokens": self.get("dataset/kwargs/max_seq_length")
             * self.total_batch_size
             * self.step,
+            "instantaneous it/s": tracker.rate(),
+            "global it/s": tracker.global_rate(),
         }
+
         self.wandb_log(**results)
-        results.update(rate)
-        print(results, flush=True)
+
+        # print(results, flush=True)
 
     def log(self, x, x_hat, tracker):
         # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
@@ -468,7 +463,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         # Try to step into the job's directory and pull (in case it's old)
         root_path = "~/polytax/"
         tpu.ssh(f"cd {root_path} && git pull origin master")
-        tpu.ssh(f"cd {root_path} && pip install -e .")
+        tpu.ssh(f"cd {root_path} && pip install -e .[xla]")
         tpu.ssh("pkill -9 python3")
 
         install_cmd = (
