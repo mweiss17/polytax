@@ -23,7 +23,7 @@ https://huggingface.co/models?filter=t5
 import os
 import io
 import wandb
-import argparse
+import time
 from copy import deepcopy
 import torch
 from wormulon.tpu_manager import TPUManager, TPUJob
@@ -415,8 +415,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         xm.rendezvous("finished run.")
 
     def beat(self):
-        import time
-
         data = torch.dumps({"last_heartbeat": time.time()})
         self.bucket.upload(self.prefix + "heartbeat.pt", data)
 
@@ -430,9 +428,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def __init__(self):
         super(Nanny, self).__init__()
         self.auto_setup()
-
-    def make_trainer(self):
-        return Trainer(self)
 
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
@@ -463,7 +458,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     )
             finally:
                 print("cleaning up job")
-                tpu.clean_up()
+                handler.clean_up()
         else:
             training_state = trainer(training_state)
 
@@ -478,29 +473,10 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         # Build initial training state
         training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
         # Setup the epoch runner
-        trainer = self.make_trainer()
+        trainer = Trainer(self)
         # Run it
         self.launch(trainer, training_state)
 
 
-def _mp_fn(index, tpu_job_buffer):
-    tpu_job = torch.load(tpu_job_buffer)
-    trainer = deepcopy(tpu_job.trainer)
-    trainer(tpu_job.training_state, tpu_job)
-    if xm.is_master_ordinal():
-        wandb.finish()
-    xm.rendezvous("finished run.")
-
-
 if __name__ == "__main__":
-    if xla_found:
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("bucket", type=str)
-        parser.add_argument("path", type=str)
-        args = parser.parse_args()
-
-        buffer = _read_blob_gcs(args.bucket, args.path)
-        xmp.spawn(_mp_fn, args=(buffer,), nprocs=8, start_method="fork")
-    else:
-        Nanny().run()
+    Nanny().run()

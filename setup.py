@@ -36,6 +36,7 @@ setuptools.setup(
         "tbp-nightly",
         "google-cloud",
         "wandb",
+        "testresources",
         "stopit",
         "addict",
         "tensorboardX",
@@ -49,7 +50,7 @@ setuptools.setup(
     extras_require={
         "xla": [
             "torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl",
-            "jax[tpu]>=0.2.16",
+            "jax[tpu]>=0.2.16 -f https://storage.googleapis.com/jax-releases/libtpu_releases.html",
         ],
     },
 )
