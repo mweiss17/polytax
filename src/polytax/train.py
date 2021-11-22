@@ -29,7 +29,6 @@ from copy import deepcopy
 import torch
 from wormulon.tpu.tpu_manager import TPUManager
 from wormulon.tpu.bucket import Bucket
-from wormulon.tpu.tpu_runner import JobRunner
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -482,6 +481,8 @@ if __name__ == "__main__":
         parser.add_argument("bucket", type=str)
         parser.add_argument("path", type=str)
         args = parser.parse_args()
+        from wormulon.tpu.tpu_runner import JobRunner
+
         JobRunner(args.bucket, args.path).run()
     else:
         Nanny().run()
