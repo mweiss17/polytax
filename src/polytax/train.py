@@ -28,7 +28,7 @@ import argparse
 from copy import deepcopy
 import torch
 import wormulon
-from wormulon.tpu.tpu_manager import TPUManager,
+from wormulon.tpu.tpu_manager import TPUManager
 from wormulon.tpu.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
