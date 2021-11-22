@@ -439,20 +439,13 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             )
 
             manager = TPUManager(**self.get("tpu/kwargs"))
-            job = TPUJob(
-                self.experiment_directory,
-                trainer,
-                training_state,
-                **self.get("job/kwargs"),
-            )
-
-            handler = manager.launch(job)
+            handler = manager.submit(trainer, training_state, self.get("job/kwargs"))
 
             print("----------------")
 
             try:
-                job_output = job.wait()
-                if job.failed:
+                job_output = handler.wait()
+                if handler.failed:
                     raise RuntimeError(
                         f"Job has failed. The following object was returned: {job_output}"
                     )
