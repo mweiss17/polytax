@@ -433,10 +433,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> "TrainingState":
         if self.get("use_tpu", False):
-            # Add the wandb key to the config
-            self.get("job/kwargs")["env_stmts"].append(
-                f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']};"
-            )
 
             manager = TPUManager(**self.get("tpu/kwargs"))
             handler = manager.submit(
@@ -450,7 +446,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
             try:
                 job_output = handler.wait()
-                if handler.failed:
+                if handler.job_has_failed:
                     raise RuntimeError(
                         f"Job has failed. The following object was returned: {job_output}"
                     )
