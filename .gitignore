@@ -5,3 +5,4 @@ __pycache__/
 *.msgpack
 *egg-info
 *experiments/*
+src/polytax/experiments/*

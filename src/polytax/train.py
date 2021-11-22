@@ -26,8 +26,8 @@ import wandb
 import time
 from copy import deepcopy
 import torch
-from wormulon.tpu_manager import TPUManager, TPUJob
-from wormulon.bucket import Bucket
+from wormulon.tpu.tpu_manager import TPUManager, TPUJob
+from wormulon.tpu.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -439,7 +439,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             )
 
             manager = TPUManager(**self.get("tpu/kwargs"))
-            handler = manager.submit(trainer, training_state, self.get("job/kwargs"))
+            handler = manager.submit(
+                trainer,
+                training_state,
+                self.experiment_directory,
+                **self.get("job/kwargs"),
+            )
 
             print("----------------")
 
