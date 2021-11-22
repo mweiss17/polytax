@@ -430,6 +430,16 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         super(Nanny, self).__init__()
         self.auto_setup()
 
+    @register_default_dispatch
+    def train(self):
+        self.initialize_wandb(resume=False)
+        # Build initial training state
+        training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
+        # Setup the epoch runner
+        trainer = Trainer(self)
+        # Run it
+        self.launch(trainer, training_state)
+
     def launch(
         self, trainer: "Trainer", training_state: "TrainingState",
     ) -> "TrainingState":
@@ -461,16 +471,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         self._step = training_state.step
         self._epoch = training_state.epoch
         return training_state
-
-    @register_default_dispatch
-    def train(self):
-        self.initialize_wandb(resume=False)
-        # Build initial training state
-        training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
-        # Setup the epoch runner
-        trainer = Trainer(self)
-        # Run it
-        self.launch(trainer, training_state)
 
 
 if __name__ == "__main__":
