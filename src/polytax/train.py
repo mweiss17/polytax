@@ -24,9 +24,11 @@ import os
 import io
 import wandb
 import time
+import argparse
 from copy import deepcopy
 import torch
-from wormulon.tpu.tpu_manager import TPUManager, TPUJob
+import wormulon
+from wormulon.tpu.tpu_manager import TPUManager,
 from wormulon.tpu.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
@@ -418,7 +420,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         data = torch.dumps({"last_heartbeat": time.time()})
         self.bucket.upload(self.prefix + "heartbeat.pt", data)
 
-    __call__ = train
+    __call__ = run
 
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
@@ -473,4 +475,13 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
 
 if __name__ == "__main__":
-    Nanny().run()
+    if xla_found:
+        print("XLA found")
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("bucket", type=str)
+        parser.add_argument("path", type=str)
+        args = parser.parse_args()
+        wormulon.tpu.JobRunner(args.bucket, args.path).run()
+    else:
+        Nanny().run()
