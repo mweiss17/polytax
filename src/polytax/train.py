@@ -350,9 +350,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if self.get("run_training"):
             for x in self.train_loader:
-                self.train(x, training_state)
+                self.train(x)
                 if self.get("run_evaluation"):
-                    self.evaluate(training_state)
+                    self.evaluate()
         return training_state
 
     def train(self, x):
