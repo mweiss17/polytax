@@ -108,7 +108,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Builds the local directory structure.
         self.experiment_directory = self._experiment_directory
         os.environ["WANDB_RUN_ID"] = self.WANDB_RUN_ID
-        self.bucket = Bucket(self.get("bucket"))
+        self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
         if self.is_master_ordinal:
@@ -257,7 +257,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def checkpoint(self):
         buffer = self.training_state.serialize()
-        if xla_found:
+        if xla_found and self.is_master_ordinal:
             path = f"{self.experiment_directory}/trainstate-{self.get('dataset/kwargs/name')}-{self.step}.pt"
             self.bucket.upload(buffer, path, overwrite=True)
         else:
