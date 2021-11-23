@@ -25,9 +25,9 @@ setuptools.setup(
         "torch==1.10.0",
         "numpy",
         "tensorboardX",
-        "tensorflow==2.8.0",
-        "keras==2.8.0",
-        "tensorflow-estimator==2.8.0",
+        # "tensorflow==2.8.0",
+        # "keras==2.7.0",
+        # "tensorflow-estimator==2.7.0",
         "tfds-nightly",
         "mesh_tensorflow",
         "t5",
@@ -42,7 +42,6 @@ setuptools.setup(
         "tensorboardX",
         "dill",
         "google-cloud-storage",
-        "torch_lr_scheduler",
         "speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@dev#egg=speedrun",
         "transformers @ git+https://github.com/Arka161/transformers@master#egg=transformers",
         "wormulon @ git+https://git@github.com/mweiss17/wormulon@main#egg=wormulon",
@@ -50,7 +49,7 @@ setuptools.setup(
     extras_require={
         "xla": [
             "torch-xla @ https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl",
-            "libtpu_nightly @ https://storage.googleapis.com/cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/libtpu_nightly-0.1.dev20211120-py3-none-any.whl",
+            # "libtpu_nightly @ https://storage.googleapis.com/cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/libtpu_nightly-0.1.dev20211120-py3-none-any.whl",
         ]
     },
 )
