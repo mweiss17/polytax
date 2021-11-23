@@ -257,7 +257,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def checkpoint(self):
         buffer = self.training_state.serialize()
-        if xla_found and self.is_master_ordinal:
+        if xla_found:
             path = f"{self.experiment_directory}/trainstate-{self.get('dataset/kwargs/name')}-{self.step}.pt"
             self.bucket.upload(buffer, path, overwrite=True)
         else:
@@ -374,7 +374,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.log_scalars_now and self.is_master_ordinal:
             self.log(x, x_hat, self.tracker)
 
-        if self.checkpoint_now:
+        if self.checkpoint_now and self.is_master_ordinal:
             self.checkpoint()
 
     def evaluate(self):
