@@ -438,7 +438,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     @register_default_dispatch
     def train(self):
         self.initialize_wandb(resume=False)
-        breakpoint()
         if self.get("bucket_name") is not None and self.get("trainstate_path") is not None:
             bucket = Bucket(self.get("bucket_name"))
             training_state_buf = bucket.download(self.get("trainstate_path"))

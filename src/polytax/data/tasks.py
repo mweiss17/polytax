@@ -90,19 +90,28 @@ seqio.MixtureRegistry.add("glue_v002_proportional", _glue_tasks_with_weight)
 
 # =================================== Mathematics / Reasoning =====================================
 
+# https://www.tensorflow.org/datasets/catalog/math_dataset
+seqio.TaskRegistry.add(
+    "math_dataset",
+    seqio.TfdsDataSource(tfds_name="math_dataset/arithmetic__mul:1.0.0"),
+    preprocessors=[
+        functools.partial(
+            preprocessors.rekey, key_map={"inputs": "question", "targets": "answer"}
+        ),
+        seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
+        seqio.preprocessors.append_eos_after_trim,
+    ],
+    output_features=DEFAULT_OUTPUT_FEATURES,
+    metric_fns=[],
+)
 
-# seqio.TaskRegistry.add(
-#     "math_dataset",
-#     seqio.TfdsDataSource(tfds_name="math_dataset/arithmetic__mul:1.0.0"),
-#     preprocessors=[
-#         functools.partial(
-#             preprocessors.rekey, key_map={"inputs": None, "targets": "text"}
-#         ),
-#         seqio.preprocessors.tokenize,
-#         seqio.CacheDatasetPlaceholder(),
-#         preprocessors.span_corruption,
-#         seqio.preprocessors.append_eos_after_trim,
-#     ],
-#     output_features=DEFAULT_OUTPUT_FEATURES,
-#     metric_fns=[],
-# )
+# import polytax.data.utils; import t5; import seqio; from t5.data.utils import get_default_vocabulary
+# tokenizer = get_default_vocabulary()
+# mixture = t5.data.get_mixture_or_task("math_dataset")
+# ds = seqio.get_dataset(mixture.name, {"inputs": 160, "targets": 32}, seqio.EncDecFeatureConverter(pack=False))
+#
+# x = next(iter(ds))
+# tokenizer.decode(x['decoder_input_tokens'].numpy().tolist())
+#
+# tokenizer.decode(x['decoder_target_tokens'].numpy().tolist())

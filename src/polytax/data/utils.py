@@ -26,7 +26,8 @@ def get_dataset(
     global_rank: int,
     seed: int,
     batch_size: int,
-    max_seq_length: int,
+    input_seq_len: int,
+    target_seq_len: int,
     split: str,
     device: torch.device,
     **kwargs,
@@ -34,12 +35,12 @@ def get_dataset(
     """Returns a dataset for pretraining."""
 
     # determine maximum sequence length to use
-    sequence_length = {
-        "inputs": max_seq_length,
-        "targets": int(max_seq_length / 4),
+    seq_len = {
+        "inputs": input_seq_len,
+        "targets": target_seq_len,
     }
 
-    dataset = build_seqio_dataset(task, sequence_length, split, seed=seed, num_epochs=1)
+    dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
     dataset = build_iterable_dataset(
         dataset, batch_size, device, global_rank, num_shards
     )
@@ -106,7 +107,8 @@ def get_eval_datasets(
     global_rank: int,
     seed: int,
     device: torch.device,
-    max_seq_length: int,
+    input_seq_len: int,
+    target_seq_len: int,
     split: str,
     use_iterable_ds: bool = False,
     **kwargs,
@@ -115,8 +117,8 @@ def get_eval_datasets(
 
     # determine maximum sequence length to use
     seq_len = {
-        "inputs": max_seq_length,
-        "targets": int(max_seq_length / 4),
+        "inputs": input_seq_len,
+        "targets": target_seq_len,
     }
 
     datasets = {}
