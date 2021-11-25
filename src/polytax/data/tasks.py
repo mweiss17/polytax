@@ -4,6 +4,7 @@ import tensorflow_datasets as tfds
 from t5.data import preprocessors
 from t5.data.tasks import DEFAULT_OUTPUT_FEATURES
 from t5.data.mixtures import _glue_tasks_with_weight
+from t5.evaluation import metrics
 from t5.data.glue_utils import get_glue_metric
 from t5.data.glue_utils import get_glue_postprocess_fn
 from t5.data.glue_utils import get_glue_text_preprocessor
@@ -103,7 +104,7 @@ seqio.TaskRegistry.add(
         seqio.preprocessors.append_eos_after_trim,
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
-    metric_fns=[],
+    metric_fns=[metrics.edit_distance, metrics.sequence_accuracy],
 )
 
 # import polytax.data.utils; import t5; import seqio; from t5.data.utils import get_default_vocabulary

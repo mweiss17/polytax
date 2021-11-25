@@ -320,7 +320,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "label": label,
             "pred": pred,
             "train_loss": loss,
-            "num_tokens": self.get("dataset/kwargs/max_seq_length")
+            "num_tokens": self.get("dataset/kwargs/input_seq_len")
             * self.total_batch_size
             * self.step,
             "instantaneous it/s": tracker.rate(),
@@ -379,7 +379,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.checkpoint_now:
             self.checkpoint()
 
-    def evaluate(self):
+    def evaluate(self, one_sample=True):
         self.model.eval()
         with torch.no_grad():
 
@@ -394,8 +394,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     predictions = self.model.generate(**x)
                     for pred in predictions:
                         outputs.extend([self.tokenizer.decode(pred.tolist())])
+                    if one_sample:
+                        break
             cached_labels, cached_datasets, max_seq_length = get_targets_and_examples(
-                self.eval_datasets, self.eval_tasks
+                self.eval_datasets, self.eval_tasks, one_sample
             )
 
             for task in self.eval_tasks:
@@ -413,7 +415,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     metric_result = metric_fn(targets, predictions)
                     for metric_name, metric_value in metric_result.items():
                         tag = "eval/{}/{}".format(task.name, metric_name)
-                        # print(f"{tag} {metric_value}")
+                        print(f"{tag} {metric_value}")
 
     def finish(self):
         if xm.is_master_ordinal():

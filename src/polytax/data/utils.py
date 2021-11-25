@@ -133,7 +133,7 @@ def get_eval_datasets(
     return datasets
 
 
-def get_targets_and_examples(datasets, tasks):
+def get_targets_and_examples(datasets, tasks, one_sample=True):
     cached_targets = {}
     cached_task_datasets = {}
     sequence_dims = {}
@@ -153,7 +153,8 @@ def get_targets_and_examples(datasets, tasks):
             for ex in batch["labels"]:
                 target = task.output_features["targets"].vocabulary.decode(ex.tolist())
                 targets.append(task.postprocess_fn(target, example=ex, is_target=True))
-
+            if one_sample:
+                break
         cached_targets[task.name] = targets
         cached_task_datasets[task.name] = datasets[task.name]
     return cached_targets, cached_task_datasets, max_sequence_length
