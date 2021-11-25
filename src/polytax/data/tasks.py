@@ -84,3 +84,25 @@ for b in tfds.text.glue.Glue.builder_configs.values():
 
 seqio.MixtureRegistry.remove("glue_v002_proportional")
 seqio.MixtureRegistry.add("glue_v002_proportional", _glue_tasks_with_weight)
+
+
+# =================================== SuperGLUE =====================================
+
+# =================================== Mathematics / Reasoning =====================================
+
+
+# seqio.TaskRegistry.add(
+#     "math_dataset",
+#     seqio.TfdsDataSource(tfds_name="math_dataset/arithmetic__mul:1.0.0"),
+#     preprocessors=[
+#         functools.partial(
+#             preprocessors.rekey, key_map={"inputs": None, "targets": "text"}
+#         ),
+#         seqio.preprocessors.tokenize,
+#         seqio.CacheDatasetPlaceholder(),
+#         preprocessors.span_corruption,
+#         seqio.preprocessors.append_eos_after_trim,
+#     ],
+#     output_features=DEFAULT_OUTPUT_FEATURES,
+#     metric_fns=[],
+# )

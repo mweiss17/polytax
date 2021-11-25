@@ -256,10 +256,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         )
 
     def checkpoint(self):
+        # this needs to happen on each TPU core because it has xm.save has a rendezvous in it
         buffer = self.training_state.serialize()
-        if xla_found:
-            path = f"{self.experiment_directory}/trainstate-{self.get('dataset/kwargs/name')}-{self.step}.pt"
-            self.bucket.upload(buffer, path, overwrite=True)
+        if xla_found and self.is_master_ordinal:
+            # only push to storage if you are the master ordinal
+            path = f"{self.experiment_directory}/trainstate/{self.get('dataset/kwargs/name')}-{self.step}.pt"
+            self.bucket.upload(path, buffer, overwrite=True)
         else:
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
             torch.save(buffer, path)
@@ -374,7 +376,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.log_scalars_now and self.is_master_ordinal:
             self.log(x, x_hat, self.tracker)
 
-        if self.checkpoint_now and self.is_master_ordinal:
+        if self.checkpoint_now:
             self.checkpoint()
 
     def evaluate(self):
@@ -436,8 +438,15 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     @register_default_dispatch
     def train(self):
         self.initialize_wandb(resume=False)
-        # Build initial training state
-        training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
+        breakpoint()
+        if self.get("bucket_name") is not None and self.get("trainstate_path") is not None:
+            bucket = Bucket(self.get("bucket_name"))
+            training_state_buf = bucket.download(self.get("trainstate_path"))
+            training_state = TrainingState.deserialize(training_state_buf)
+            print(training_state)
+        else:
+            # Build initial training state
+            training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
         # Setup the epoch runner
         trainer = Trainer(self)
         # Run it
@@ -488,4 +497,5 @@ if __name__ == "__main__":
 
         JobRunner(args.bucket, args.path).run()
     else:
+        print("XLA not found")
         Nanny().run()

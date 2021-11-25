@@ -99,3 +99,6 @@ class TrainingState(object):
     @classmethod
     def is_instance(cls, obj):
         return isinstance(obj, cls) or (obj.__class__.__name__ == cls.__name__)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(step={self.step}, epoch={self.epoch}), {self.misc_attributes}"
