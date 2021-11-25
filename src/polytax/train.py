@@ -382,13 +382,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         with torch.no_grad():
 
             outputs = []
-            for task_name, loader in self.eval_tasks.items():
+            for task_name, loader in self.eval_datasets.items():
                 for x in loader:
-                    del x["labels"]
+                    try:
+                        del x["labels"]
+                    except Exception:
+                        print("no labels found")
+
                     predictions = self.model.generate(**x)
                     for pred in predictions:
                         outputs.extend([self.tokenizer.decode(pred.tolist())])
-
             cached_labels, cached_datasets, max_seq_length = get_targets_and_examples(
                 self.eval_datasets, self.eval_tasks
             )

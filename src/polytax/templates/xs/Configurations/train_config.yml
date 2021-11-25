@@ -1,5 +1,5 @@
 run_training: True
-run_evaluation: True
+run_evaluation: False
 seed: 12345
 
 # Multi-host
@@ -15,7 +15,7 @@ dataset:
     batch_size: 4 #per device
     use_iterable_ds: True
 #
-#dataset:
+#dataset:get xs working on tpu
 #  kwargs:
 #    name: "glue_v002_proportional" # "glue_cola_v002"
 #    split: "validation"
