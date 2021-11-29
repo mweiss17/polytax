@@ -54,7 +54,7 @@ seqio.TaskRegistry.add(
             preprocessors.rekey, key_map={"inputs": None, "targets": "text"}
         ),
         seqio.preprocessors.tokenize,
-        seqio.CacheDatasetPlaceholder(),
+        seqio.CacheDatasetPlaceholder(required=False),
         preprocessors.span_corruption,
         seqio.preprocessors.append_eos_after_trim,
     ],

@@ -87,9 +87,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._experiment_directory = nanny._experiment_directory
         self._config = deepcopy(nanny._config)
         self._argv = deepcopy(nanny._argv)
-        self.WANDB_ENTITY = nanny.WANDB_ENTITY
-        self.WANDB_PROJECT = nanny.WANDB_PROJECT
-        self.WANDB_RUN_ID = nanny.wandb_run_id
+        self.WANDB_ENTITY = nanny.WANDB_ENTITY or ""
+        self.WANDB_PROJECT = nanny.WANDB_PROJECT or ""
+        self.WANDB_RUN_ID = nanny.wandb_run_id or ""
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
@@ -161,6 +161,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.get("model_config")["layer_norm_epsilon"]
         )
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
+
         if "switch" in self.get("model_config/model_type"):
             model_config = SwitchConfig.from_dict(self.get("model_config"))
             self.model = SwitchForConditionalGeneration(model_config)
@@ -439,7 +440,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
     @register_default_dispatch
     def train(self):
-        self.initialize_wandb(resume=False)
+        if self.get("use_wandb"):
+            self.initialize_wandb(resume=False)
         if self.get("bucket_name") is not None and self.get("trainstate_path") is not None:
             bucket = Bucket(self.get("bucket_name"))
             training_state_buf = bucket.download(self.get("trainstate_path"))
