@@ -446,7 +446,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             bucket = Bucket(self.get("bucket_name"))
             train_state_buf = bucket.download(self.get("trainstate_path"))
             train_state = TrainState.deserialize(train_state_buf)
-            print(train_state)
         else:
             # Build initial training state
             train_state = TrainState.initial_state(step=self.step, epoch=self.epoch)
