@@ -70,7 +70,7 @@ from polytax.data.utils import (
     get_targets_and_examples,
 )
 from polytax.utils.utils import reduce_gradients
-from polytax.utils.train_state import TrainingState
+from wormulon.train_state import TrainState
 
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
@@ -93,16 +93,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
-    def _build(self, training_state: "TrainingState"):
+    def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
-        self._build_general(training_state)
-        self._build_tasks(training_state)
-        self._build_model(training_state)
-        self._build_optimizer(training_state)
+        self._build_general(train_state)
+        self._build_tasks(train_state)
+        self._build_model(train_state)
+        self._build_optimizer(train_state)
 
-    def _build_general(self, training_state: "TrainingState"):
-        self._step = training_state.step
-        self._epoch = training_state.epoch
+    def _build_general(self, train_state: "TrainState"):
+        self._step = train_state.step
+        self._epoch = train_state.epoch
         self.tracker = RateTracker()
 
         # Builds the local directory structure.
@@ -118,20 +118,20 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 # GLOO for CPU comms, NCCL for GPU comms
                 dist.init_process_group(backend=self.get("distributed/backend"))
 
-    def _build_tasks(self, training_state: "TrainingState"):
+    def _build_tasks(self, train_state: "TrainState"):
 
         # if not xm.is_master_ordinal():
         #     xm.rendezvous("download_only_once")
 
         if self.get("run_training"):
-            self._build_train_tasks(training_state)
+            self._build_train_tasks(train_state)
         if self.get("run_evaluation"):
-            self._build_eval_tasks(training_state)
+            self._build_eval_tasks(train_state)
 
         # if xm.is_master_ordinal():
         #     xm.rendezvous("download_only_once")
 
-    def _build_train_tasks(self, training_state: "TrainingState"):
+    def _build_train_tasks(self, train_state: "TrainState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
         self.train_loader = get_dataset(
             task=self.train_task,
@@ -142,7 +142,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             **self.get("dataset/kwargs"),
         )
 
-    def _build_eval_tasks(self, training_state: "TrainingState"):
+    def _build_eval_tasks(self, train_state: "TrainState"):
         self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
 
         self.eval_datasets = get_eval_datasets(
@@ -154,7 +154,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             **self.get("dataset/kwargs"),
         )
 
-    def _build_model(self, training_state: "TrainingState"):
+    def _build_model(self, train_state: "TrainState"):
         self.tokenizer = get_default_vocabulary()
 
         self.get("model_config")["layer_norm_epsilon"] = float(
@@ -168,15 +168,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
-        training_state.load_in_model(self.model)
+        train_state.load_in_model(self.model)
         self.model.to(self.device)
 
-    def _build_optimizer(self, training_state: "TrainingState"):
+    def _build_optimizer(self, train_state: "TrainState"):
         # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optim = eval(self.get("optim/name"))(
             self.model.parameters(), **self.get("optim/kwargs")
         )
-        training_state.load_in_optims(optim=self.optim,)
+        train_state.load_in_optims(optim=self.optim,)
 
     @property
     def device(self):
@@ -245,8 +245,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return buffer.getvalue()
 
     @property
-    def training_state(self, misc_attributes: dict = None):
-        return TrainingState(
+    def train_state(self, misc_attributes: dict = None):
+        return TrainState(
             step=self.step,
             epoch=self.epoch,
             model_state_dict=self.model.state_dict(),
@@ -258,7 +258,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def checkpoint(self):
         # this needs to happen on each TPU core because it has xm.save has a rendezvous in it
-        buffer = self.training_state.serialize()
+        buffer = self.train_state.serialize()
         if xla_found and self.is_master_ordinal:
             # only push to storage if you are the master ordinal
             path = f"{self.experiment_directory}/trainstate/{self.get('dataset/kwargs/name')}-{self.step}.pt"
@@ -348,15 +348,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return loss
 
     @register_default_dispatch
-    def run(self, training_state):
-        self._build(training_state)
+    def run(self, train_state):
+        self._build(train_state)
 
         if self.get("run_training"):
             for x in self.train_loader:
                 self.train(x)
                 if self.get("run_evaluation"):
                     self.evaluate()
-        return training_state
+        return train_state
 
     def train(self, x):
         self.model.train()
@@ -444,26 +444,26 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             self.initialize_wandb(resume=False)
         if self.get("bucket_name") is not None and self.get("trainstate_path") is not None:
             bucket = Bucket(self.get("bucket_name"))
-            training_state_buf = bucket.download(self.get("trainstate_path"))
-            training_state = TrainingState.deserialize(training_state_buf)
-            print(training_state)
+            train_state_buf = bucket.download(self.get("trainstate_path"))
+            train_state = TrainState.deserialize(train_state_buf)
+            print(train_state)
         else:
             # Build initial training state
-            training_state = TrainingState.initial_state(step=self.step, epoch=self.epoch)
+            train_state = TrainState.initial_state(step=self.step, epoch=self.epoch)
         # Setup the epoch runner
         trainer = Trainer(self)
         # Run it
-        self.launch(trainer, training_state)
+        self.launch(trainer, train_state)
 
     def launch(
-        self, trainer: "Trainer", training_state: "TrainingState",
-    ) -> "TrainingState":
+        self, trainer: "Trainer", train_state: "TrainState",
+    ) -> "TrainState":
         if self.get("use_tpu", False):
 
             manager = TPUManager(**self.get("tpu/kwargs"))
             handler = manager.submit(
                 trainer,
-                training_state,
+                train_state,
                 self.experiment_directory,
                 **self.get("job/kwargs"),
             )
@@ -480,12 +480,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 print("cleaning up job")
                 handler.clean_up()
         else:
-            training_state = trainer(training_state)
+            train_state = trainer(train_state)
 
         # Update self
-        self._step = training_state.step
-        self._epoch = training_state.epoch
-        return training_state
+        self._step = train_state.step
+        self._epoch = train_state.epoch
+        return train_state
 
 
 if __name__ == "__main__":
