@@ -119,16 +119,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _build_tasks(self, train_state: "TrainState"):
 
-        # if not xm.is_master_ordinal():
-        #     xm.rendezvous("download_only_once")
+        if not xm.is_master_ordinal():
+            xm.rendezvous("download_only_once")
 
         if self.get("run_training"):
             self._build_train_tasks(train_state)
         if self.get("run_evaluation"):
             self._build_eval_tasks(train_state)
 
-        # if xm.is_master_ordinal():
-        #     xm.rendezvous("download_only_once")
+        if xm.is_master_ordinal():
+            xm.rendezvous("download_only_once")
 
     def _build_train_tasks(self, train_state: "TrainState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
