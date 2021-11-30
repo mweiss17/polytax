@@ -106,13 +106,3 @@ seqio.TaskRegistry.add(
     output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[metrics.edit_distance, metrics.sequence_accuracy],
 )
-
-# import polytax.data.utils; import t5; import seqio; from t5.data.utils import get_default_vocabulary
-# tokenizer = get_default_vocabulary()
-# mixture = t5.data.get_mixture_or_task("math_dataset")
-# ds = seqio.get_dataset(mixture.name, {"inputs": 160, "targets": 32}, seqio.EncDecFeatureConverter(pack=False))
-#
-# x = next(iter(ds))
-# tokenizer.decode(x['decoder_input_tokens'].numpy().tolist())
-#
-# tokenizer.decode(x['decoder_target_tokens'].numpy().tolist())

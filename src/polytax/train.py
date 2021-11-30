@@ -482,7 +482,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 self.experiment_directory,
                 **self.get("job/kwargs"),
             )
-
             print("----------------")
 
             try:
