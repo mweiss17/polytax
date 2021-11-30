@@ -514,5 +514,4 @@ if __name__ == "__main__":
 
         JobRunner(args.bucket, args.path).run()
     else:
-        print("XLA not found")
         Nanny().run()
