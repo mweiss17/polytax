@@ -69,7 +69,6 @@ from polytax.data.utils import (
     get_eval_datasets,
     get_targets_and_examples,
 )
-from polytax.utils.utils import reduce_gradients
 from wormulon.train_state import TrainState
 
 
@@ -245,7 +244,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return buffer.getvalue()
 
     @property
-    def train_state(self, misc_attributes: dict = None):
+    def train_state(self):
         return TrainState(
             step=self.step,
             epoch=self.epoch,
@@ -253,7 +252,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             losses_state_dict=self.losses_state_dict,
             optims_state_dict=self.optims_state_dict,
             schedulers_state_dict=self.schedulers_state_dict,
-            misc_attributes=misc_attributes,
+            misc_attributes={"wandb_run_id": self.wandb_run_id},
         )
 
     def checkpoint(self):
@@ -358,6 +357,24 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     self.evaluate()
         return train_state
 
+    def reduce_gradients(self, xla_found, is_multi_host, optimizer):
+        # AllReduce the model gradients so we can step the global gradient
+        if not xla_found:
+            return
+        import torch_xla.core.xla_model as xm
+
+        xm.reduce_gradients(optimizer)
+
+        if not is_multi_host:
+            return
+
+        # if self.is_master_ordinal:
+        #     dist.all_reduce(param.grad.cpu() / dist.get_world_size())
+        #     xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
+        # else:
+        #     zeros = torch.zeros_like(param.grad)
+        #     xm.all_reduce(xm.REDUCE_SUM, zeros)
+
     def train(self, x):
         self.model.train()
 
@@ -366,7 +383,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss.backward()
 
         if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-            reduce_gradients(xla_found, self.is_multi_host, self.optim)
+            self.reduce_gradients(xla_found, self.is_multi_host, self.optim)
             self.optim.step()
             self.optim.zero_grad()
 
@@ -423,9 +440,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             wandb.finish()
         xm.rendezvous("finished run.")
 
-    def beat(self):
-        data = torch.dumps({"last_heartbeat": time.time()})
-        self.bucket.upload(self.prefix + "heartbeat.pt", data)
 
     __call__ = run
 
@@ -446,6 +460,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             bucket = Bucket(self.get("bucket_name"))
             train_state_buf = bucket.download(self.get("trainstate_path"))
             train_state = TrainState.deserialize(train_state_buf)
+            self.wandb_run_id = train_state.misc_attributes.get("wandb_run_id")
+
         else:
             # Build initial training state
             train_state = TrainState.initial_state(step=self.step, epoch=self.epoch)
