@@ -15,21 +15,18 @@ except ImportError:
 from polytax.data import dataset  # pylint: disable=unused-import
 from polytax.data import tasks  # pylint: disable=unused-import
 from polytax.data.dataset import IterableDataset, MapDataset
-
+from polytax.utils.dist import *
 
 """ BUILD TASKS AND DATASETS """
 
 
 def get_dataset(
     task: seqio.Task,
-    num_shards: int,
-    global_rank: int,
     seed: int,
     batch_size: int,
     input_seq_len: int,
     target_seq_len: int,
     split: str,
-    device: torch.device,
     **kwargs,
 ) -> Iterator:
     """Returns a dataset for pretraining."""
@@ -41,9 +38,7 @@ def get_dataset(
     }
 
     dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
-    dataset = build_iterable_dataset(
-        dataset, batch_size, device, global_rank, num_shards
-    )
+    dataset = build_iterable_dataset(dataset, batch_size)
     return dataset
 
 
@@ -77,12 +72,9 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, num_epochs=1):
     return dataset
 
 
-def build_iterable_dataset(
-    dataset, batch_size, device, shard_idx, num_shards, cycle=True
-) -> Iterator:
+def build_iterable_dataset(dataset, batch_size, cycle=True) -> Iterator:
     """Builds an iterable dataset."""
-    dataset = dataset.shard(num_shards=num_shards, index=shard_idx)
-
+    dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
     dataset = IterableDataset(dataset)
     if cycle:
@@ -103,10 +95,7 @@ def build_map_ds(ds: ParallelMapDataset):
 def get_eval_datasets(
     tasks: Dict[str, seqio.Task],
     batch_size: int,
-    num_shards: int,
-    global_rank: int,
     seed: int,
-    device: torch.device,
     input_seq_len: int,
     target_seq_len: int,
     split: str,
@@ -126,7 +115,7 @@ def get_eval_datasets(
     for task in tasks:
         ds = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
         if use_iterable_ds:
-            ds = build_iterable_dataset(ds, batch_size, device, global_rank, num_shards)
+            ds = build_iterable_dataset(ds, batch_size, device, GLOBAL_RANK, NUM_SHARDS)
         else:
             ds = build_map_ds(ds)
         datasets[task.name] = ds
