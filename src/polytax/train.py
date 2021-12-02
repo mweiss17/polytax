@@ -328,9 +328,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     @register_default_dispatch
     def run(self, train_state):
         self._build(train_state)
-
+        print("starting training")
         if self.get("run_training"):
             for x in self.train_loader:
+                print("eyy")
                 self.train(x)
                 if self.get("run_evaluation"):
                     self.evaluate()
