@@ -326,8 +326,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # AllReduce the model gradients so we can step the global gradient
         if not xla_found:
             return
-        import torch_xla.core.xla_model as xm
-
         xm.reduce_gradients(optimizer)
 
         if not IS_MULTI_HOST:
@@ -405,7 +403,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             wandb.finish()
         xm.rendezvous("finished run.")
 
-
     __call__ = run
 
 
@@ -468,15 +465,5 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
 
 if __name__ == "__main__":
-    if xla_found:
-        print("XLA found")
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("bucket", type=str)
-        parser.add_argument("path", type=str)
-        args = parser.parse_args()
-        from wormulon.tpu.tpu_runner import JobRunner
-
-        JobRunner(args.bucket, args.path).run()
-    else:
+    if not xla_found:
         Nanny().run()
