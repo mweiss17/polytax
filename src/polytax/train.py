@@ -69,7 +69,6 @@ from polytax.data.utils import (
     get_eval_datasets,
     get_targets_and_examples,
 )
-from polytax.utils.dist import *
 from wormulon.train_state import TrainState
 
 
@@ -93,8 +92,19 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
+    def _build_dist(self):
+        self.device = xm.xla_device() if xla_found else torch.device("cpu")
+        self.LOCAL_WORLD_SIZE = int(xm.xrt_world_size()) if xla_found else 1  # Devices per host
+        self.GLOBAL_WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))  # Total number of hosts
+        self.NUM_SHARDS = self.GLOBAL_WORLD_SIZE * self.LOCAL_WORLD_SIZE
+        self.LOCAL_RANK = int(xm.get_ordinal()) if xla_found else 0
+        self.GLOBAL_RANK = int(os.environ.get("RANK", 0)) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
+        self.IS_MASTER_ORDINAL = xm.is_master_ordinal() if xla_found else True
+        self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
+
     def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
+        self._build_dist()
         self._build_general(train_state)
         self._build_tasks(train_state)
         self._build_model(train_state)
@@ -111,16 +121,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
-        if IS_MASTER_ORDINAL:
+        if self.IS_MASTER_ORDINAL:
             if self.get("use_wandb"):
                 self.initialize_wandb(resume=True)
-            if IS_MULTI_HOST:
+            if self.IS_MULTI_HOST:
                 # GLOO for CPU comms, NCCL for GPU comms
                 dist.init_process_group(backend=self.get("distributed/backend"))
 
     def _build_tasks(self, train_state: "TrainState"):
 
-        if xla_found and not IS_MASTER_ORDINAL:
+        if xla_found and not self.IS_MASTER_ORDINAL:
             xm.rendezvous("download_only_once")
 
         if self.get("run_training"):
@@ -128,7 +138,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_evaluation"):
             self._build_eval_tasks(train_state)
 
-        if xla_found and IS_MASTER_ORDINAL:
+        if xla_found and self.IS_MASTER_ORDINAL:
             xm.rendezvous("download_only_once")
 
     def _build_train_tasks(self, train_state: "TrainState"):
@@ -136,6 +146,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.train_loader = get_dataset(
             task=self.train_task,
             seed=self.get("seed"),
+            GLOBAL_RANK=self.GLOBAL_RANK,
+            NUM_SHARDS=self.NUM_SHARDS,
             **self.get("dataset/kwargs"),
         )
 
@@ -145,6 +157,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.eval_datasets = get_eval_datasets(
             tasks=self.eval_tasks,
             seed=self.get("seed"),
+            GLOBAL_RANK=self.GLOBAL_RANK,
+            NUM_SHARDS=self.NUM_SHARDS,
             **self.get("dataset/kwargs"),
         )
 
@@ -158,11 +172,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if "switch" in self.get("model_config/model_type"):
             model_config = self.get("model_config").copy()
-            model_config["LOCAL_WORLD_SIZE"] = LOCAL_WORLD_SIZE
-            model_config["GLOBAL_WORLD_SIZE"] = GLOBAL_WORLD_SIZE
-            model_config["LOCAL_RANK"] = LOCAL_RANK
-            model_config["GLOBAL_RANK"] = GLOBAL_RANK
-            model_config["NUM_SHARDS"] = NUM_SHARDS
+            model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
+            model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
+            model_config["LOCAL_RANK"] = self.LOCAL_RANK
+            model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
+            model_config["NUM_SHARDS"] = self.NUM_SHARDS
             model_config["xla_found"] = xla_found
             model_config = SwitchConfig.from_dict(model_config)
 
@@ -171,7 +185,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
         train_state.load_in_model(self.model)
-        self.model.to(device)
+        self.model.to(self.device)
 
     def _build_optimizer(self, train_state: "TrainState"):
         # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
@@ -182,7 +196,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     @property
     def total_batch_size(self):
-        return self.get("dataset/kwargs/batch_size") * LOCAL_WORLD_SIZE * GLOBAL_WORLD_SIZE
+        return self.get("dataset/kwargs/batch_size") * self.LOCAL_WORLD_SIZE * self.GLOBAL_WORLD_SIZE
 
     @property
     def checkpoint_now(self):
@@ -225,7 +239,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def checkpoint(self):
         # this needs to happen on each TPU core because it has xm.save has a rendezvous in it
         buffer = self.train_state.serialize()
-        if xla_found and IS_MASTER_ORDINAL:
+        if xla_found and self.IS_MASTER_ORDINAL:
             # only push to storage if you are the master ordinal
             path = f"{self.experiment_directory}/trainstate/{self.get('dataset/kwargs/name')}-{self.step}.pt"
             self.bucket.upload(path, buffer, overwrite=True)
@@ -270,7 +284,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = x_hat.loss.detach()
 
         # Print to console
-        print_training_update(device, step, loss, tracker.rate(), tracker.global_rate())
+        print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
 
         # Return if we don't have wandb
         if not self.get("use_wandb"):
@@ -328,10 +342,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             return
         xm.reduce_gradients(optimizer)
 
-        if not IS_MULTI_HOST:
+        if not self.IS_MULTI_HOST:
             return
 
-        # if self.is_master_ordinal:
+        # if self.self.IS_MASTER_ORDINAL:
         #     dist.all_reduce(param.grad.cpu() / dist.get_world_size())
         #     xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
         # else:
@@ -346,7 +360,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss.backward()
 
         if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-            self.reduce_gradients(xla_found, self.is_multi_host, self.optim)
+            self.reduce_gradients(self.optim)
             self.optim.step()
             self.optim.zero_grad()
 
@@ -354,7 +368,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.next_step()
         self.tracker.add(1)
 
-        if self.log_scalars_now and IS_MASTER_ORDINAL:
+        if self.log_scalars_now and self.IS_MASTER_ORDINAL:
             self.log(x, x_hat, self.tracker)
 
         if self.checkpoint_now:
@@ -399,7 +413,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         print(f"{tag} {metric_value}")
 
     def finish(self):
-        if IS_MASTER_ORDINAL:
+        if self.IS_MASTER_ORDINAL:
             wandb.finish()
         xm.rendezvous("finished run.")
 
@@ -465,5 +479,15 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
 
 if __name__ == "__main__":
-    if not xla_found:
+    if xla_found:
+        print("XLA found")
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("bucket", type=str)
+        parser.add_argument("path", type=str)
+        args = parser.parse_args()
+        from wormulon.tpu.tpu_runner import JobRunner
+
+        JobRunner(args.bucket, args.path).run()
+    else:
         Nanny().run()

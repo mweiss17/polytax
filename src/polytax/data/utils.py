@@ -15,7 +15,6 @@ except ImportError:
 from polytax.data import dataset  # pylint: disable=unused-import
 from polytax.data import tasks  # pylint: disable=unused-import
 from polytax.data.dataset import IterableDataset, MapDataset
-from polytax.utils.dist import *
 
 """ BUILD TASKS AND DATASETS """
 
@@ -27,6 +26,8 @@ def get_dataset(
     input_seq_len: int,
     target_seq_len: int,
     split: str,
+    GLOBAL_RANK,
+    NUM_SHARDS,
     **kwargs,
 ) -> Iterator:
     """Returns a dataset for pretraining."""
@@ -38,7 +39,7 @@ def get_dataset(
     }
 
     dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
-    dataset = build_iterable_dataset(dataset, batch_size)
+    dataset = build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS)
     return dataset
 
 
@@ -72,7 +73,7 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, num_epochs=1):
     return dataset
 
 
-def build_iterable_dataset(dataset, batch_size, cycle=True) -> Iterator:
+def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, cycle=True) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -99,6 +100,8 @@ def get_eval_datasets(
     input_seq_len: int,
     target_seq_len: int,
     split: str,
+    GLOBAL_RANK,
+    NUM_SHARDS,
     use_iterable_ds: bool = False,
     **kwargs,
 ) -> Dict[str, Iterator]:
