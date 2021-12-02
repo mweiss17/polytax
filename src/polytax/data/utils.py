@@ -28,6 +28,7 @@ def get_dataset(
     split: str,
     GLOBAL_RANK,
     NUM_SHARDS,
+    device,
     **kwargs,
 ) -> Iterator:
     """Returns a dataset for pretraining."""
@@ -39,7 +40,7 @@ def get_dataset(
     }
 
     dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
-    dataset = build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS)
+    dataset = build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
     return dataset
 
 
@@ -73,7 +74,7 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, num_epochs=1):
     return dataset
 
 
-def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, cycle=True) -> Iterator:
+def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, cycle=True) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -102,6 +103,7 @@ def get_eval_datasets(
     split: str,
     GLOBAL_RANK,
     NUM_SHARDS,
+    device,
     use_iterable_ds: bool = False,
     **kwargs,
 ) -> Dict[str, Iterator]:

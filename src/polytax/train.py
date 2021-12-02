@@ -148,6 +148,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             seed=self.get("seed"),
             GLOBAL_RANK=self.GLOBAL_RANK,
             NUM_SHARDS=self.NUM_SHARDS,
+            device=self.device,
             **self.get("dataset/kwargs"),
         )
 
@@ -159,6 +160,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             seed=self.get("seed"),
             GLOBAL_RANK=self.GLOBAL_RANK,
             NUM_SHARDS=self.NUM_SHARDS,
+            device=self.device,
             **self.get("dataset/kwargs"),
         )
 
@@ -325,17 +327,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
-    @register_default_dispatch
-    def run(self, train_state):
-        self._build(train_state)
-        print("starting training")
-        if self.get("run_training"):
-            for x in self.train_loader:
-                print("eyy")
-                self.train(x)
-                if self.get("run_evaluation"):
-                    self.evaluate()
-        return train_state
 
     def reduce_gradients(self, optimizer):
         # AllReduce the model gradients so we can step the global gradient
@@ -352,6 +343,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # else:
         #     zeros = torch.zeros_like(param.grad)
         #     xm.all_reduce(xm.REDUCE_SUM, zeros)
+
+    @register_default_dispatch
+    def run(self, train_state):
+        self._build(train_state)
+        if self.get("run_training"):
+            for x in self.train_loader:
+                self.train(x)
+                if self.get("run_evaluation"):
+                    self.evaluate()
+        return train_state
 
     def train(self, x):
         self.model.train()
