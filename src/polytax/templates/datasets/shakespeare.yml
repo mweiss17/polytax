@@ -6,3 +6,4 @@ dataset:
     target_seq_len: 8
     batch_size: 4 #per device
     use_iterable_ds: True
+    num_epochs: 100

@@ -352,6 +352,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 self.train(x)
                 if self.get("run_evaluation"):
                     self.evaluate()
+        if xla_found:
+            self.finish()
         return train_state
 
     def train(self, x):
@@ -434,15 +436,15 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def train(self):
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-        if self.get("bucket_name") is not None and self.get("trainstate_path") is not None:
+        if self.get("bucket_name") is not None and self.get("fncall_path") is not None:
             bucket = Bucket(self.get("bucket_name"))
-            train_state_buf = bucket.download(self.get("trainstate_path"))
-            train_state = TrainState.deserialize(train_state_buf)
-            self.wandb_run_id = train_state.misc_attributes.get("wandb_run_id")
+            buf = bucket.download(self.get("fncall_path"))
+            fncall = FunctionCall.deserialize(buf)
+            self.wandb_run_id = fncall.trainstate.misc_attributes.get("wandb_run_id", "")
 
         else:
             # Build initial training state
-            train_state = TrainState.initial_state(step=self.step, epoch=self.epoch)
+            train_state = TrainState.initial_state(step=self.step, epoch=self.epoch, misc_attributes={"wandb_run_id": self.wandb_run_id})
         # Setup the epoch runner
         trainer = Trainer(self)
         # Run it
@@ -452,7 +454,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         self, trainer: "Trainer", train_state: "TrainState",
     ) -> "TrainState":
         if self.get("use_tpu", False):
-
+            if self.get("use_wandb"):
+                wandb.finish()
             manager = TPUManager(**self.get("tpu/kwargs"))
             handler = manager.submit(
                 trainer,

@@ -14,6 +14,7 @@ dataset:
     target_seq_len: 128
     batch_size: 8 # per device
     use_iterable_ds: True
+    num_epochs: 100
 
 #dataset:
 #  kwargs:
@@ -81,7 +82,7 @@ tpu:
     netrange: "192.170.0.0/29"
     acc_type: "v3-8"
     preemptible: False
-    bucket: "must-results"
+    bucket: "must-results-eu"
     project: "polytax"
 job:
   kwargs:

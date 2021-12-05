@@ -26,6 +26,7 @@ def get_dataset(
     input_seq_len: int,
     target_seq_len: int,
     split: str,
+    num_epochs: int,
     GLOBAL_RANK,
     NUM_SHARDS,
     device,
@@ -39,7 +40,7 @@ def get_dataset(
         "targets": target_seq_len,
     }
 
-    dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
+    dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=num_epochs)
     dataset = build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
     return dataset
 
@@ -74,7 +75,7 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, num_epochs=1):
     return dataset
 
 
-def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, cycle=True) -> Iterator:
+def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, cycle=False) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
@@ -101,6 +102,7 @@ def get_eval_datasets(
     input_seq_len: int,
     target_seq_len: int,
     split: str,
+    num_epochs: int,
     GLOBAL_RANK,
     NUM_SHARDS,
     device,
@@ -118,7 +120,7 @@ def get_eval_datasets(
     datasets = {}
 
     for task in tasks:
-        ds = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=1)
+        ds = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=num_epochs)
         if use_iterable_ds:
             ds = build_iterable_dataset(ds, batch_size, device, GLOBAL_RANK, NUM_SHARDS)
         else:
