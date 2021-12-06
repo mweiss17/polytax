@@ -3,7 +3,7 @@ dataset:
     name: "glue_v002_proportional"
     split: "validation"
     input_seq_len: 128
-    output_seq_len: 128
+    target_seq_len: 2
     batch_size: 4
     use_iterable_ds: True
-    num_epochs: 100
+    num_epochs: 10000000 # this needs to be large so we dont run out of data while evaluating

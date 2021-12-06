@@ -23,9 +23,11 @@ https://huggingface.co/models?filter=t5
 import os
 import io
 import wandb
+import numpy as np
 import time
 import argparse
 from copy import deepcopy
+from collections import defaultdict
 import torch
 from wormulon.tpu.tpu_manager import TPUManager
 from wormulon.tpu.bucket import Bucket
@@ -67,7 +69,6 @@ from polytax.data.utils import (
     get_task,
     get_dataset,
     get_eval_datasets,
-    get_targets_and_examples,
 )
 from wormulon.train_state import TrainState
 
@@ -282,11 +283,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         preds = self.tokenizer.decode(preds_list)
         return input, labels, preds, accuracy
 
-    def _log(self, step, tracker, x, x_hat):
+    def _log_train(self, x, x_hat):
         loss = x_hat.loss.detach()
 
         # Print to console
-        print_training_update(self.device, step, loss, tracker.rate(), tracker.global_rate())
+        print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
 
         # Return if we don't have wandb
         if not self.get("use_wandb"):
@@ -295,8 +296,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
         results = {
-            "step": step,
-            "accuracy": accuracy,
+            "step": self.step,
+            "train_accuracy": accuracy,
             "input_examples": input,
             "label": label,
             "pred": pred,
@@ -304,23 +305,55 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "num_tokens": self.get("dataset/kwargs/input_seq_len")
             * self.total_batch_size
             * self.step,
-            "instantaneous it/s": tracker.rate(),
-            "global it/s": tracker.global_rate(),
+            "instantaneous it/s": self.tracker.rate(),
+            "global it/s": self.tracker.global_rate(),
         }
 
         self.wandb_log(**results)
 
         # print(results, flush=True)
 
-    def log(self, x, x_hat, tracker):
-        # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
-        if xla_found:
-            xm.add_step_closure(
-                self._log, args=(self.step, tracker, x, x_hat), run_async=True
-            )
-        # Otherwise just call the function to log directly
-        else:
-            self._log(self.step, tracker, x, x_hat)
+    def _log_eval(self, all_preds, examples):
+        results = {
+            "step": self.step,
+            "instantaneous it/s": self.tracker.rate(),
+            "global it/s": self.tracker.global_rate(),
+        }
+        metric_results = {}
+        for task in self.eval_tasks:
+            # Extract the portion of decodes corresponding to this dataset
+            predictions = []
+            text_preds = []
+            targets = []
+            text_targets = []
+            ex = examples[task.name][0]
+            task_preds = all_preds[task.name][0]
+            for i, preds in enumerate(task_preds):
+                predictions.append(task.postprocess_fn(preds, example=ex))
+                text_preds.append(self.tokenizer.decode([preds]))
+                text_target = self.tokenizer.decode(ex['labels'][i].tolist())
+                if task.name == "glue_qqp_v002" and text_target == "not":
+                    text_target = "not_duplicate"
+                if task.name == "glue_mrpc_v002" and text_target == "not":
+                    text_target = "not_equivalent"
+                targets.append(task.postprocess_fn(text_target, example=ex['input_ids'][i], is_target=True))
+                text_targets.append(text_target)
+            for metric_fn in task.metric_fns:
+                try:
+                    # print(f"targets: {targets[0]}, predicted: {predictions[0]}")
+                    metric_result = metric_fn(targets, predictions)
+                    if np.isnan(list(metric_result.values())[0]):
+                        metric_result[list(metric_result.keys())[0]] = 0.
+                except Exception as e:
+                    print(f"Metric failed with error: {e}")
+                    breakpoint()
+                    metric_result = 0.0
+                for metric_name, metric_value in metric_result.items():
+                    tag = "eval/{}/{}".format(task.name, metric_name)
+                    metric_results[tag] = metric_value
+        results["mean_accuracy"] = np.mean(list(metric_results.values()))
+        results["eval_accuracy"] = metric_results
+        self.wandb_log(**results)
 
     def loss(self, logits, labels):
         loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
@@ -350,7 +383,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_training"):
             for x in self.train_loader:
                 self.train(x)
-                if self.get("run_evaluation"):
+                if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                     self.evaluate()
         if xla_found:
             self.finish()
@@ -373,7 +406,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.tracker.add(1)
 
         if self.log_scalars_now and self.IS_MASTER_ORDINAL:
-            self.log(x, x_hat, self.tracker)
+            # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
+            if xla_found:
+                xm.add_step_closure(
+                    self._log_train, args=(x, x_hat), run_async=True
+                )
+            # Otherwise just call the function to log directly
+            else:
+                self._log_train(x, x_hat)
 
         if self.checkpoint_now:
             self.checkpoint()
@@ -381,40 +421,34 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def evaluate(self, one_sample=True):
         self.model.eval()
         with torch.no_grad():
-
-            outputs = []
+            examples = defaultdict(list)
+            preds = defaultdict(list)
             for task_name, loader in self.eval_datasets.items():
                 for x in loader:
+                    examples[task_name].append(x.copy())
                     try:
                         del x["labels"]
                     except Exception:
                         print("no labels found")
+                    # model_preds = self.model.generate(x['input_ids'], num_return_sequences=1, num_beams=1)
+                    outputs = self.model(**x)
+                    out = outputs.logits.argmax(2).view(-1).cpu().tolist()
+                    out = list(filter(lambda x: x is not 0, out))
+                    preds[task_name].append(out)
 
-                    predictions = self.model.generate(**x)
-                    for pred in predictions:
-                        outputs.extend([self.tokenizer.decode(pred.tolist())])
                     if one_sample:
                         break
-            cached_labels, cached_datasets, max_seq_length = get_targets_and_examples(
-                self.eval_datasets, self.eval_tasks, one_sample
-            )
 
-            for task in self.eval_tasks:
-                # Extract the portion of decodes corresponding to this dataset
-                dataset_size = len(cached_labels[task.name])
-                predictions = [
-                    task.postprocess_fn(d, example=ex)
-                    for d, ex in zip(
-                        outputs[:dataset_size], self.eval_datasets[task.name]
-                    )
-                ]
+            # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
+            if xla_found:
+                xm.add_step_closure(
+                    self._log_eval, args=(preds, examples), run_async=True
+                )
+            # Otherwise just call the function to log directly
+            else:
+                self._log_eval(preds, examples)
 
-                for metric_fn in task.metric_fns:
-                    targets = cached_labels[task.name]
-                    metric_result = metric_fn(targets, predictions)
-                    for metric_name, metric_value in metric_result.items():
-                        tag = "eval/{}/{}".format(task.name, metric_name)
-                        print(f"{tag} {metric_value}")
+
 
     def finish(self):
         if self.IS_MASTER_ORDINAL:

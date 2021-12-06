@@ -122,35 +122,9 @@ def get_eval_datasets(
     for task in tasks:
         ds = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=num_epochs)
         if use_iterable_ds:
-            ds = build_iterable_dataset(ds, batch_size, device, GLOBAL_RANK, NUM_SHARDS)
+            ds = build_iterable_dataset(ds, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
         else:
             ds = build_map_ds(ds)
         datasets[task.name] = ds
     return datasets
 
-
-def get_targets_and_examples(datasets, tasks, one_sample=True):
-    cached_targets = {}
-    cached_task_datasets = {}
-    sequence_dims = {}
-
-    # TODO fixme when adding superGLUE
-    max_sequence_length = {"input_ids": 0, "labels": 0}
-    for task in tasks:
-        targets = []
-
-        for batch in datasets[task.name]:
-            for k in max_sequence_length:
-                sequence_dim = sequence_dims.get(k, 0)
-                sequence_length = batch[k].shape[sequence_dim]
-                max_sequence_length[k] = max(max_sequence_length[k], sequence_length)
-
-            # Create list of postprocessed targets
-            for ex in batch["labels"]:
-                target = task.output_features["targets"].vocabulary.decode(ex.tolist())
-                targets.append(task.postprocess_fn(target, example=ex, is_target=True))
-            if one_sample:
-                break
-        cached_targets[task.name] = targets
-        cached_task_datasets[task.name] = datasets[task.name]
-    return cached_targets, cached_task_datasets, max_sequence_length
