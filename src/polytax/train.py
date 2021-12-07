@@ -303,6 +303,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         }
 
         self.wandb_log(**results)
+        self.bucket.touch(self.experiment_directory + "/heartbeat")
 
         # print(results, flush=True)
 
@@ -377,9 +378,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             for x in self.train_loader:
                 if self.get("num_train_steps") == self.step:
                     break
-                if xla_found and self.IS_MASTER_ORDINAL:
-                    self.bucket.touch(self.experiment_directory + "/heartbeat")
-
                 self.train(x)
                 if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                     self.evaluate()
@@ -447,7 +445,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 self._log_eval(preds, examples)
 
 
-
     def finish(self):
         if self.IS_MASTER_ORDINAL:
             wandb.finish()
@@ -464,22 +461,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         super(Nanny, self).__init__()
         self.auto_setup()
 
-    def recover(self):
-        bucket = Bucket(self.get("tpu/kwargs/bucket"))
-        train_state = bucket.get_latest_trainstate(self.experiment_directory)
-        return train_state
-
     @register_default_dispatch
     def train(self):
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-        if self.get("recover_from_latest"):
-            train_state = self.recover()
-        else:
-            train_state = TrainState.initial_state(step=self.step, epoch=self.epoch, misc_attributes={"wandb_run_id": self.wandb_run_id})
-        # Setup the epoch runner
+        train_state = TrainState.initial_state(step=self.step, epoch=self.epoch, misc_attributes={"wandb_run_id": self.wandb_run_id})
         trainer = Trainer(self)
-        # Run it
         self.launch(trainer, train_state)
 
     def launch(
@@ -488,6 +475,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         if self.get("use_tpu", False):
             if self.get("use_wandb"):
                 wandb.finish()
+
             manager = TPUManager(**self.get("tpu/kwargs"))
             handler = manager.submit(
                 trainer,
@@ -503,6 +491,10 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     raise RuntimeError(
                         f"Job has failed. The following object was returned: {job_output}"
                     )
+                if handler.job_has_died:
+                    print("Job died, restarting from latest train state, cleaning up handler then restarting")
+                    handler.clean_up()
+                    self.launch(trainer, train_state)
             finally:
                 print("cleaning up job")
                 handler.clean_up()
