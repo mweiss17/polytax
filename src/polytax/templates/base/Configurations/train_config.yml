@@ -15,7 +15,6 @@ dataset:
     target_seq_len: 128
     batch_size: 8 # per device
     use_iterable_ds: True
-    num_epochs: 100
 
 #dataset:
 #  kwargs:

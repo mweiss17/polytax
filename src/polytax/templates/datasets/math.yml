@@ -6,4 +6,3 @@ dataset:
     target_seq_len: 30
     batch_size: 4
     use_iterable_ds: True
-    num_epochs: 100

@@ -16,7 +16,6 @@ dataset:
     target_seq_len: 8
     batch_size: 4 #per device
     use_iterable_ds: True
-    num_epochs: 100
 
 #dataset:get xs working on tpu
 #  kwargs:
@@ -45,6 +44,8 @@ training:
 # Steps
 wandb:
   log_scalars_every: 1
+
+num_train_steps: 1000000
 
 # Logging
 use_wandb: True

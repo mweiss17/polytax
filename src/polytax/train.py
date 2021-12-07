@@ -144,14 +144,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _build_train_tasks(self, train_state: "TrainState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
-        self.train_loader = get_dataset(
-            task=self.train_task,
-            seed=self.get("seed"),
-            GLOBAL_RANK=self.GLOBAL_RANK,
-            NUM_SHARDS=self.NUM_SHARDS,
-            device=self.device,
-            **self.get("dataset/kwargs"),
-        )
+        self.train_loader = get_dataset(task=self.train_task, seed=self.get("seed"), GLOBAL_RANK=self.GLOBAL_RANK, NUM_SHARDS=self.NUM_SHARDS, device=self.device, **self.get("dataset/kwargs"),)
+        print(next(self.train_loader))
 
     def _build_eval_tasks(self, train_state: "TrainState"):
         self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
@@ -382,6 +376,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._build(train_state)
         if self.get("run_training"):
             for x in self.train_loader:
+                if self.get("num_train_steps") == self.step:
+                    break
                 self.train(x)
                 if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                     self.evaluate()
@@ -433,7 +429,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     # model_preds = self.model.generate(x['input_ids'], num_return_sequences=1, num_beams=1)
                     outputs = self.model(**x)
                     out = outputs.logits.argmax(2).view(-1).cpu().tolist()
-                    out = list(filter(lambda x: x is not 0, out))
+                    out = list(filter(None, out))
                     preds[task_name].append(out)
 
                     if one_sample:

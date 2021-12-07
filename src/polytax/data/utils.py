@@ -26,7 +26,6 @@ def get_dataset(
     input_seq_len: int,
     target_seq_len: int,
     split: str,
-    num_epochs: int,
     GLOBAL_RANK,
     NUM_SHARDS,
     device,
@@ -39,8 +38,7 @@ def get_dataset(
         "inputs": input_seq_len,
         "targets": target_seq_len,
     }
-
-    dataset = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=num_epochs)
+    dataset = build_seqio_dataset(task, seq_len, split, seed=seed)
     dataset = build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
     return dataset
 
@@ -61,7 +59,7 @@ def get_eval_tasks(name: str, split: str, **kwargs) -> Iterator:
     return tasks
 
 
-def build_seqio_dataset(task, sequence_length, split, seed=1, num_epochs=1):
+def build_seqio_dataset(task, sequence_length, split, seed=1):
     dataset = seqio.get_dataset(
         task.name,
         task_feature_lengths=sequence_length,
@@ -69,23 +67,19 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, num_epochs=1):
         use_cached=False,
         shuffle=True,
         seed=seed,
-        num_epochs=num_epochs,
         feature_converter=seqio.EncDecFeatureConverter(pack=True),
     )
     return dataset
 
 
-def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, cycle=False) -> Iterator:
+def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
     dataset = IterableDataset(dataset)
-    if cycle:
-        dataset = itertools.cycle(dataset)
+    dataset = itertools.cycle(dataset)
     if pl:
-        dataset = iter(pl.MpDeviceLoader(iter(dataset), device))
-    else:
-        dataset = iter(dataset)
+        dataset = iter(pl.MpDeviceLoader(dataset, device))
     return dataset
 
 
@@ -102,7 +96,6 @@ def get_eval_datasets(
     input_seq_len: int,
     target_seq_len: int,
     split: str,
-    num_epochs: int,
     GLOBAL_RANK,
     NUM_SHARDS,
     device,
@@ -120,7 +113,7 @@ def get_eval_datasets(
     datasets = {}
 
     for task in tasks:
-        ds = build_seqio_dataset(task, seq_len, split, seed=seed, num_epochs=num_epochs)
+        ds = build_seqio_dataset(task, seq_len, split, seed=seed)
         if use_iterable_ds:
             ds = build_iterable_dataset(ds, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
         else:
