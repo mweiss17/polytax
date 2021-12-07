@@ -118,7 +118,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         # Builds the local directory structure.
         self.experiment_directory = self._experiment_directory
-        os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id")
+        os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
