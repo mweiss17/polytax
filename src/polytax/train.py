@@ -377,6 +377,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             for x in self.train_loader:
                 if self.get("num_train_steps") == self.step:
                     break
+                if xla_found and self.IS_MASTER_ORDINAL:
+                    self.bucket.touch(self.experiment_directory + "/heartbeat")
+
                 self.train(x)
                 if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                     self.evaluate()
@@ -473,7 +476,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         if self.get("recover_from_latest"):
             train_state = self.recover()
         else:
-            # Build initial training state
             train_state = TrainState.initial_state(step=self.step, epoch=self.epoch, misc_attributes={"wandb_run_id": self.wandb_run_id})
         # Setup the epoch runner
         trainer = Trainer(self)
