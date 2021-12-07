@@ -118,7 +118,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         # Builds the local directory structure.
         self.experiment_directory = self._experiment_directory
-        os.environ["WANDB_RUN_ID"] = self.WANDB_RUN_ID
+        os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
 
@@ -463,9 +463,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
     def recover(self):
         bucket = Bucket(self.get("tpu/kwargs/bucket"))
-        trainstate = bucket.get_latest_trainstate(self.experiment_directory)
-        self.wandb_run_id = trainstate.misc_attributes.get("wandb_run_id", "")
-        return trainstate
+        train_state = bucket.get_latest_trainstate(self.experiment_directory)
+        return train_state
 
     @register_default_dispatch
     def train(self):
