@@ -461,16 +461,18 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         super(Nanny, self).__init__()
         self.auto_setup()
 
+    def recover(self):
+        bucket = Bucket(self.get("tpu/kwargs/bucket"))
+        trainstate = bucket.get_latest_trainstate(self.experiment_directory)
+        self.wandb_run_id = trainstate.misc_attributes.get("wandb_run_id", "")
+        return trainstate
+
     @register_default_dispatch
     def train(self):
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-        if self.get("bucket_name") is not None and self.get("fncall_path") is not None:
-            bucket = Bucket(self.get("bucket_name"))
-            buf = bucket.download(self.get("fncall_path"))
-            fncall = FunctionCall.deserialize(buf)
-            self.wandb_run_id = fncall.trainstate.misc_attributes.get("wandb_run_id", "")
-
+        if self.get("recover_from_latest"):
+            train_state = self.recover()
         else:
             # Build initial training state
             train_state = TrainState.initial_state(step=self.step, epoch=self.epoch, misc_attributes={"wandb_run_id": self.wandb_run_id})
