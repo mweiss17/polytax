@@ -145,7 +145,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_train_tasks(self, train_state: "TrainState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
         self.train_loader = get_dataset(task=self.train_task, seed=self.get("seed"), GLOBAL_RANK=self.GLOBAL_RANK, NUM_SHARDS=self.NUM_SHARDS, device=self.device, **self.get("dataset/kwargs"),)
-        print(next(self.train_loader))
 
     def _build_eval_tasks(self, train_state: "TrainState"):
         self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
