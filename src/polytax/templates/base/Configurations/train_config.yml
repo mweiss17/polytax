@@ -5,7 +5,10 @@ eval_every: 10
 
 # Multi-host
 distributed:
-  backend: "GLOO" # use NCCL for GPU
+  kwargs:
+    backend: "GLOO" # use NCCL for GPU
+    rank: -1
+    world_size: 1
 
 dataset:
   kwargs:

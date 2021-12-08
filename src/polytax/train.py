@@ -96,10 +96,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_dist(self):
         self.device = xm.xla_device() if xla_found else torch.device("cpu")
         self.LOCAL_WORLD_SIZE = int(xm.xrt_world_size()) if xla_found else 1  # Devices per host
-        self.GLOBAL_WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))  # Total number of hosts
+        self.GLOBAL_WORLD_SIZE = int(self.get("distributed/kwargs/world_size"))  # Number of hosts
         self.NUM_SHARDS = self.GLOBAL_WORLD_SIZE * self.LOCAL_WORLD_SIZE
         self.LOCAL_RANK = int(xm.get_ordinal()) if xla_found else 0
-        self.GLOBAL_RANK = int(os.environ.get("RANK", 0)) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
+        self.GLOBAL_RANK = int(self.get("GLOBAL_RANK")) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
         self.IS_MASTER_ORDINAL = xm.is_master_ordinal() if xla_found else True
         self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
 
@@ -127,7 +127,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 self.initialize_wandb(resume=True)
             if self.IS_MULTI_HOST:
                 # GLOO for CPU comms, NCCL for GPU comms
-                dist.init_process_group(backend=self.get("distributed/backend"))
+                dist.init_process_group(**self.get("distributed/kwargs"))
 
     def _build_tasks(self, train_state: "TrainState"):
 
@@ -457,31 +457,33 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         self.auto_setup()
 
     @register_default_dispatch
-    def train(self):
+    def launch(self):
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-        train_state = TrainState.initial_state(step=self.step, epoch=self.epoch, misc_attributes={"wandb_run_id": self.wandb_run_id})
-        trainer = Trainer(self)
-        self.launch(trainer, train_state)
+            wandb.finish()
 
-    def launch(
-        self, trainer: "Trainer", train_state: "TrainState",
-    ) -> "TrainState":
+        train_state = TrainState.initial_state(step=self.step, epoch=self.epoch,
+                                               misc_attributes={"wandb_run_id": self.wandb_run_id})
         if self.get("use_tpu", False):
-            if self.get("use_wandb"):
-                wandb.finish()
 
             manager = TPUManager(**self.get("tpu/kwargs"))
-            handler = manager.submit(
-                trainer,
-                train_state,
-                self.experiment_directory,
-                **self.get("job/kwargs"),
-            )
+            handlers = []
+            for i in range(self.get("distributed/num_hosts")):
+                self.GLOBAL_RANK = i
+                trainer = Trainer(self)
+
+                handler = manager.submit(
+                    trainer,
+                    train_state,
+                    self.experiment_directory,
+                    **self.get("job/kwargs"),
+                )
+                handlers.append(handler)
+
             print("----------------")
 
             try:
-                job_output = handler.wait()
+                job_output = handlers[0].wait()
                 if handler.job_has_failed:
                     raise RuntimeError(
                         f"Job has failed. The following object was returned: {job_output}"
@@ -494,12 +496,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 print("cleaning up job")
                 handler.clean_up()
         else:
+            trainer = Trainer(self)
             train_state = trainer(train_state)
 
         # Update self
         self._step = train_state.step
         self._epoch = train_state.epoch
-        return train_state
 
 
 if __name__ == "__main__":
