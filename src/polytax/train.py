@@ -354,22 +354,19 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
+    def step_gradients(self):
+        if xla_found:
+            gradients = xm._fetch_gradients(self.optim)
+            xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
-    def reduce_gradients(self, optimizer):
-        # AllReduce the model gradients so we can step the global gradient
-        if not xla_found:
-            return
-        xm.reduce_gradients(optimizer)
+            if self.IS_MULTI_HOST:
+                dist.all_reduce(gradients, op=dist.ReduceOp.SUM)
+                gradients = gradients / self.GLOBAL_WORLD_SIZE
 
-        if not self.IS_MULTI_HOST:
-            return
+            xm.mark_step()
+        self.optim.step()
+        self.optim.zero_grad()
 
-        # if self.self.IS_MASTER_ORDINAL:
-        #     dist.all_reduce(param.grad.cpu() / dist.get_world_size())
-        #     xm.all_reduce(xm.REDUCE_SUM, param.grad.to(self.device))
-        # else:
-        #     zeros = torch.zeros_like(param.grad)
-        #     xm.all_reduce(xm.REDUCE_SUM, zeros)
 
     @register_default_dispatch
     def run(self, train_state):
@@ -393,9 +390,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss.backward()
 
         if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-            self.reduce_gradients(self.optim)
-            self.optim.step()
-            self.optim.zero_grad()
+            self.step_gradients(self.optim)
 
         # Increment step count
         self.next_step()
