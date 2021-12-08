@@ -304,7 +304,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         }
 
         self.wandb_log(**results)
-        self.bucket.touch(self.experiment_directory + "/heartbeat")
+        if xla_found:
+            self.bucket.touch(self.experiment_directory + "/heartbeat")
 
         # print(results, flush=True)
 
