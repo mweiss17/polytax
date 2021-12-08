@@ -462,10 +462,10 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
         wandb_run_id = ""
 
-        # if self.get("use_wandb"):
-        #     self.initialize_wandb(resume=False)
-        #     wandb_run_id = self.wandb_run_id
-        #     wandb.finish()
+        if self.get("use_wandb"):
+            self.initialize_wandb(resume=False)
+            wandb_run_id = self.wandb_run_id
+            wandb.finish()
 
         train_state = TrainState.initial_state(step=self.step, epoch=self.epoch,
                                                misc_attributes={"wandb_run_id": wandb_run_id})
@@ -510,7 +510,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             if state == "failed" or state == "died":
                 for future, handler in handlers:
                     print(f"Job {state}, restarting from latest train state, cleaning up handlers then restarting")
-                    handler.clean_up()
+                    # handler.clean_up()
                     self.launch(handler.trainer, train_state)
 
         else:
