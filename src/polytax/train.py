@@ -32,6 +32,7 @@ from collections import defaultdict
 import torch
 from wormulon.tpu.tpu_manager import TPUManager
 from wormulon.tpu.bucket import Bucket
+from wormulon.tpu.tpu_job import TPUJob
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 
@@ -362,8 +363,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
             if self.IS_MULTI_HOST:
-                dist.all_reduce(gradients, op=dist.ReduceOp.SUM)
-                gradients = gradients / self.GLOBAL_WORLD_SIZE
+                dist.all_reduce(gradients.div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
 
             xm.mark_step()
         self.optim.step()
@@ -456,61 +456,61 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         super(Nanny, self).__init__()
         self.auto_setup()
 
-    @register_default_dispatch
-    async def launch(self):
 
+    def setup_wandb(self):
         wandb_run_id = ""
-
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-            wandb_run_id = self.wandb_run_id
+            wandb_run_id = wandb_run_id
             wandb.finish()
+        return wandb_run_id
 
+    async def run(self):
         train_state = TrainState.initial_state(step=self.step, epoch=self.epoch,
-                                               misc_attributes={"wandb_run_id": wandb_run_id})
-        if self.get("use_tpu", False):
-
+                                               misc_attributes={"wandb_run_id": self.setup_wandb()})
+        if self.get("use_tpu"):
             manager = TPUManager(**self.get("tpu/kwargs"))
-            handlers = []
-            for i in range(self.get("distributed/kwargs/world_size")):
-                print("running on rank {}".format(i))
-                trainer = Trainer(self)
-                trainer._config['GLOBAL_RANK'] = i
+            tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
 
-                future, handler = manager.submit(
-                    trainer,
-                    train_state,
-                    self.experiment_directory,
-                    **self.get("job/kwargs"),
-                )
-                handlers.append((future, handler))
+            # create jobs, first setup the trainer with necessary/global args
+            trainer = Trainer(self)
+            env_stmts = trainer.get("job/kwargs/env_stmts")
+            env_stmts.append(f"export WANDB_API_KEY={os.environ.get('WANDB_API_KEY', '')};")
+            trainer.set('job/kwargs/env_stmts', env_stmts)
+            trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:8470")
+            jobs = []
+            for i in range(self.get("distributed/kwargs/world_size")):
+                trainer.set('GLOBAL_RANK', i)
+                job = TPUJob(trainer, train_state, tpus[i])
+                future = job.submit()
+                jobs.append((future, job))
 
             state = "running"
             while state == "running":
-                for future, handler in handlers:
+                for future, job in jobs:
                     state = future.done() or state
-                    out = handler.outbuffer.getvalue()
-                    err = handler.errbuffer.getvalue()
+                    out = job.outbuffer.getvalue()
+                    err = job.errbuffer.getvalue()
                     if out:
                         print(out)
-                        handler.outbuffer.seek(0)
-                        handler.outbuffer.truncate()
+                        job.outbuffer.seek(0)
+                        job.outbuffer.truncate()
                     if err:
                         print(err)
-                        handler.errbuffer.seek(0)
-                        handler.errbuffer.truncate()
+                        job.errbuffer.seek(0)
+                        job.errbuffer.truncate()
 
-                    if handler.job_has_failed:
-                        state = "failed"
-                    if handler.job_has_died:
-                        state = "died"
+                    # if job.failed:
+                    #     state = "failed"
+                    # if job.died:
+                    #     state = "died"
                 await asyncio.sleep(1)
 
             if state == "failed" or state == "died":
-                for future, handler in handlers:
-                    print(f"Job {state}, restarting from latest train state, cleaning up handlers then restarting")
-                    handler.clean_up()
-                    # self.launch(handler.trainer, train_state)
+                for future, job in jobs:
+                    print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
+                    job.clean_up()
+                    # self.launch(job.trainer, train_state)
 
         else:
             trainer = Trainer(self)
@@ -533,5 +533,4 @@ if __name__ == "__main__":
 
         JobRunner(args.bucket, args.path).run()
     else:
-
         asyncio.run(Nanny().run())
