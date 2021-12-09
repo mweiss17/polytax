@@ -423,15 +423,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         del x["labels"]
                     except Exception:
                         print("no labels found")
-                    # model_preds = self.model.generate(x['input_ids'], num_return_sequences=1, num_beams=1)
                     outputs = self.model(**x)
-                    out = outputs.logits.argmax(2).view(-1).cpu().tolist()
-                    out = list(filter(None, out))
+                    out = outputs.logits.argmax(2).cpu()
+                    out = out[:, 1].tolist()
                     preds[task_name].append(out)
 
                     if one_sample:
                         break
-
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(
@@ -475,9 +473,9 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             manager = TPUManager(**self.get("tpu/kwargs"))
             handlers = []
             for i in range(self.get("distributed/kwargs/world_size")):
-                self.GLOBAL_RANK = i
                 print("running on rank {}".format(i))
                 trainer = Trainer(self)
+                trainer._config['GLOBAL_RANK'] = i
 
                 future, handler = manager.submit(
                     trainer,
@@ -511,8 +509,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             if state == "failed" or state == "died":
                 for future, handler in handlers:
                     print(f"Job {state}, restarting from latest train state, cleaning up handlers then restarting")
-                    # handler.clean_up()
-                    self.launch(handler.trainer, train_state)
+                    handler.clean_up()
+                    # self.launch(handler.trainer, train_state)
 
         else:
             trainer = Trainer(self)
