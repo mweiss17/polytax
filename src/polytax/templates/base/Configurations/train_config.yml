@@ -16,7 +16,7 @@ dataset:
     split: "train"
     input_seq_len: 512
     target_seq_len: 128
-    batch_size: 8 # per device
+    batch_size: 16 # per device
     use_iterable_ds: True
 
 #dataset:

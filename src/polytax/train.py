@@ -368,13 +368,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
             if self.IS_MULTI_HOST:
-
-                if not self.IS_MASTER_ORDINAL:
-                    gradients = [g.zero_() for g in gradients]
+                print("IS_MULTI_HOST, reducing gradients")
+                if self.IS_MASTER_ORDINAL:
+                    print("IS_MASTER_RODINAL, reducing gradients")
+                    dist.all_reduce(gradients, op=dist.ReduceOp.SUM)
                     xm.rendezvous("multi_host_grad_sync")
 
-                if self.IS_MASTER_ORDINAL:
-                    dist.all_reduce(gradients, op=dist.ReduceOp.SUM)
+                if not self.IS_MASTER_ORDINAL:
+                    print("not master ordinal, zeroing gradients")
+                    gradients = [g.zero_() for g in gradients]
                     xm.rendezvous("multi_host_grad_sync")
 
                 xm.all_reduce('sum', gradients, scale=1.0)
@@ -533,16 +535,17 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             trainer = Trainer(self)
             trainer(train_state)
 
+        # Update self
+        self._step = train_state.step
+        self._epoch = train_state.epoch
+
     def exit_gracefully(self, signum, frame):
         print("Exiting gracefully")
         for future, job in self.jobs:
             job.clean_up()
-            future.cancel()
         sys.exit(0)
 
-        # Update self
-        self._step = train_state.step
-        self._epoch = train_state.epoch
+
 
 
 if __name__ == "__main__":
