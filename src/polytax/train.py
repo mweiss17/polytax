@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import io
+import sys
 import signal
 import wandb
 import asyncio
@@ -102,7 +103,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.GLOBAL_WORLD_SIZE = int(self.get("distributed/kwargs/world_size", 1))  # Number of hosts
         self.NUM_SHARDS = self.GLOBAL_WORLD_SIZE * self.LOCAL_WORLD_SIZE
         self.LOCAL_RANK = int(xm.get_ordinal()) if xla_found else 0
-        self.GLOBAL_RANK = int(self.get("GLOBAL_RANK", 0)) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
+        self.GLOBAL_RANK = int(self.get("distributed/kwargs/rank", 0)) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
         self.IS_MASTER_ORDINAL = xm.is_master_ordinal() if xla_found else True
         self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
 
@@ -124,13 +125,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
-
+        print(
+            f"Using {self.GLOBAL_WORLD_SIZE} hosts. Each host has {self.LOCAL_WORLD_SIZE} devices. IS_MULTI_HOST={self.IS_MULTI_HOST}")
+        print(f"distributed/kwargs={self.get('distributed/kwargs')}")
         if self.IS_MASTER_ORDINAL:
             if self.get("use_wandb"):
                 self.initialize_wandb(resume=True)
-            print(
-                f"Using {self.GLOBAL_WORLD_SIZE} hosts. Each host has {self.LOCAL_WORLD_SIZE} devices. IS_MULTI_HOST={self.IS_MULTI_HOST}")
-            print(f"distributed/kwargs={self.get('distributed/kwargs')}")
+
             if self.IS_MULTI_HOST:
                 # GLOO for CPU comms, NCCL for GPU comms
                 dist.init_process_group(**self.get("distributed/kwargs"))
@@ -480,19 +481,19 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             manager = TPUManager(**self.get("tpu/kwargs"))
             tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
 
-            # create jobs, first setup the trainer with necessary/global args
-            trainer = Trainer(self)
-            env_stmts = trainer.get("job/kwargs/env_stmts")
-            env_stmts.append(f"export WANDB_API_KEY={os.environ.get('WANDB_API_KEY', '')};")
-            trainer.set('job/kwargs/env_stmts', env_stmts)
-            trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
 
             for i in range(self.get("distributed/kwargs/world_size")):
+                print(f"creating job-{i}")
+                trainer = Trainer(self)
+                env_stmts = trainer.get("job/kwargs/env_stmts")
+                env_stmts.append(f"export WANDB_API_KEY={os.environ.get('WANDB_API_KEY', '')};")
+                trainer.set('job/kwargs/env_stmts', env_stmts)
+                trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
                 trainer.set('distributed/kwargs/rank', i)
-                trainer.set('GLOBAL_RANK', i)
                 job = TPUJob(trainer, train_state, tpus[i])
                 future = job.submit()
                 self.jobs.append((future, job))
+
 
             state = "running"
             while state == "running":
@@ -501,11 +502,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     out = job.outbuffer.getvalue()
                     err = job.errbuffer.getvalue()
                     if out:
-                        print(f"job-{job.trainer.get('GLOBAL_RANK')}: {out}")
+                        print(f"job-{job.trainer.get('distributed/kwargs/rank')}: {out}")
                         job.outbuffer.seek(0)
                         job.outbuffer.truncate()
                     if err:
-                        print(f"job-{job.trainer.get('GLOBAL_RANK')}: {err}")
+                        print(f"job-{job.trainer.get('distributed/kwargs/rank')}: {err}")
                         job.errbuffer.seek(0)
                         job.errbuffer.truncate()
 
