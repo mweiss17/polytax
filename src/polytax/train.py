@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import io
+import signal
 import wandb
 import asyncio
 import numpy as np
@@ -127,6 +128,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.IS_MASTER_ORDINAL:
             if self.get("use_wandb"):
                 self.initialize_wandb(resume=True)
+            print(
+                f"Using {self.GLOBAL_WORLD_SIZE} hosts. Each host has {self.LOCAL_WORLD_SIZE} devices. IS_MULTI_HOST={self.IS_MULTI_HOST}")
+            print(f"distributed/kwargs={self.get('distributed/kwargs')}")
             if self.IS_MULTI_HOST:
                 # GLOO for CPU comms, NCCL for GPU comms
                 dist.init_process_group(**self.get("distributed/kwargs"))
@@ -455,13 +459,17 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
     def __init__(self):
         super(Nanny, self).__init__()
         self.auto_setup()
+        self.jobs = []
+        original_sigint = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self.exit_gracefully)
+
 
 
     def setup_wandb(self):
         wandb_run_id = ""
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-            wandb_run_id = wandb_run_id
+            wandb_run_id = self.wandb_run_id
             wandb.finish()
         return wandb_run_id
 
@@ -477,26 +485,27 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             env_stmts = trainer.get("job/kwargs/env_stmts")
             env_stmts.append(f"export WANDB_API_KEY={os.environ.get('WANDB_API_KEY', '')};")
             trainer.set('job/kwargs/env_stmts', env_stmts)
-            trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:8470")
-            jobs = []
+            trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
+
             for i in range(self.get("distributed/kwargs/world_size")):
+                trainer.set('distributed/kwargs/rank', i)
                 trainer.set('GLOBAL_RANK', i)
                 job = TPUJob(trainer, train_state, tpus[i])
                 future = job.submit()
-                jobs.append((future, job))
+                self.jobs.append((future, job))
 
             state = "running"
             while state == "running":
-                for future, job in jobs:
+                for future, job in self.jobs:
                     state = future.done() or state
                     out = job.outbuffer.getvalue()
                     err = job.errbuffer.getvalue()
                     if out:
-                        print(out)
+                        print(f"job-{job.trainer.get('GLOBAL_RANK')}: {out}")
                         job.outbuffer.seek(0)
                         job.outbuffer.truncate()
                     if err:
-                        print(err)
+                        print(f"job-{job.trainer.get('GLOBAL_RANK')}: {err}")
                         job.errbuffer.seek(0)
                         job.errbuffer.truncate()
 
@@ -514,7 +523,13 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
         else:
             trainer = Trainer(self)
-            train_state = trainer(train_state)
+            trainer(train_state)
+
+    def exit_gracefully(self, signum, frame):
+        print("Exiting gracefully")
+        for future, job in self.jobs:
+            job.clean_up()
+        sys.exit(0)
 
         # Update self
         self._step = train_state.step
