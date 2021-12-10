@@ -369,7 +369,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             cpu_grads = []
             print("cpu gradsing")
             for grad in gradients:
-                cpu_grads.append(grad.detach().to("cpu"))
+                cpu_grads.append(grad.to(torch.device("cpu")))
 
             print(
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
