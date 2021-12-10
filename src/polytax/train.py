@@ -417,7 +417,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         print("done reducing gradients, stepping")
         xm.rendezvous("stepping")
         self.optim.step()
-        xm.mark_step()
+        # xm.mark_step()
         self.optim.zero_grad()
 
 
@@ -448,15 +448,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.next_step()
         self.tracker.add(1)
 
-        if self.log_scalars_now and self.IS_MASTER_ORDINAL:
-            # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
-            if xla_found:
-                xm.add_step_closure(
-                    self._log_train, args=(x, x_hat), run_async=True
-                )
-            # Otherwise just call the function to log directly
-            else:
-                self._log_train(x, x_hat)
+        # if self.log_scalars_now and self.IS_MASTER_ORDINAL:
+        #     # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
+        #     if xla_found:
+        #         xm.add_step_closure(
+        #             self._log_train, args=(x, x_hat), run_async=True
+        #         )
+        #     # Otherwise just call the function to log directly
+        #     else:
+        #         self._log_train(x, x_hat)
 
         if self.checkpoint_now:
             self.checkpoint()
