@@ -370,7 +370,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 print(
                     f"in multi-host, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
 
-                if self.IS_MASTER_ORDINAL:
+                if xm.is_master_ordinal():
                     print(f"IS_MASTER_ORDINAL, reducing gradients: {gradients[0]}, dist: {dist.get_rank()} / {dist.get_world_size()}")
                     for gradient in gradients:
                         print("reducing...")
