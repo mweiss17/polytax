@@ -363,6 +363,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
+            xm.mark_step()
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print(f"first reduce, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()},  {gradients}")
@@ -385,7 +386,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print(f"not master ordinal, reducing gradients: {gradients[0]}")
                     xm.all_reduce('sum', gradients, scale=1.0)
 
-            xm.mark_step()
         self.optim.step()
         self.optim.zero_grad()
 
