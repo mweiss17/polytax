@@ -370,7 +370,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print(
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
             if self.IS_MULTI_HOST:
+                xm.rendezvous("in-multi-host")
                 if self.IS_MASTER_ORDINAL:
+                    xm.rendezvous("before-dist-reduced")
                     print("is master")
                     for grad in gradients:
                         print("for grad in grad")
@@ -385,6 +387,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print("reduced.")
                     xm.rendezvous("dist-reduced")
                 else:
+                    xm.rendezvous("before-dist-reduced")
                     print("is not master")
                     xm.rendezvous("dist-reduced")
             # if self.IS_MULTI_HOST:
