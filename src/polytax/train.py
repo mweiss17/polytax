@@ -375,7 +375,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                                 print(f"Fetching gradient for {p.size()}")
                                 gradients.append(p.grad.data.cpu().numpy())
                             else:
-                                gradients.append(p.grad.data.to(device)))
+                                gradients.append(p.grad.data.to(device))
         return gradients
 
     def step_gradients(self):
