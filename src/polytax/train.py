@@ -366,24 +366,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.mark_step()
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-            print(f"first reduce, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()},  {gradients}")
+            print(f"first reduce, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
             if self.IS_MULTI_HOST:
                 print(
-                    f"in multi-host, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}, {gradients}")
+                    f"in multi-host, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
 
                 if xm.is_master_ordinal():
-                    print(f"IS_MASTER_ORDINAL, reducing gradients: {gradients[0]}, dist: {dist.get_rank()} / {dist.get_world_size()}")
+                    print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
                     for gradient in gradients:
                         print("reducing...")
-                        dist.all_reduce(gradient.to("cpu").div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
+                        dist.all_reduce(gradient.cpu().div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
                     print(f"dist reduced succesfully")
                     gradients = [gradient.to(self.device) for gradient in gradients]
-                    print(f"gradients: {gradients[0]}")
                     xm.all_reduce('sum', gradients, scale=1.0)
-                    print(f"final gradients: {gradients[0]}")
                 else:
                     self.optim.zero_grad()
-                    print(f"not master ordinal, reducing gradients: {gradients[0]}")
+                    print(f"not master ordinal, reducing gradients")
                     xm.all_reduce('sum', gradients, scale=1.0)
 
         self.optim.step()
