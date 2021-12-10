@@ -370,18 +370,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print("first reduce")
             if self.IS_MULTI_HOST:
-                print("IS_MULTI_HOST, reducing gradients")
+                print(f"IS_MULTI_HOST, reducing gradients: {gradients[0]}")
                 if self.IS_MASTER_ORDINAL:
-                    print("IS_MASTER_RODINAL, reducing gradients")
                     dist.all_reduce(gradients, op=dist.ReduceOp.SUM)
-                    xm.rendezvous("multi_host_grad_sync")
-
-                if not self.IS_MASTER_ORDINAL:
-                    print("not master ordinal, zeroing gradients")
-                    gradients = [g.zero_() for g in gradients]
-                    xm.rendezvous("multi_host_grad_sync")
-
-                xm.all_reduce('sum', gradients, scale=1.0)
+                    print(f"IS_MASTER_ORDINAL, reducing gradients: {gradients[0]}")
+                    self.optim.zero_grad()
+                    xm.all_reduce('sum', final_grads, scale=1.0)
+                else:
+                    self.optim.zero_grad()
+                    print(f"not master ordinal, reducing gradients: {gradients[0]}")
+                    xm.all_reduce('sum', gradients, scale=1.0)
+            print(f"final gradients: {gradients[0]}")
 
             xm.mark_step()
         self.optim.step()
@@ -491,8 +490,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         if self.get("use_tpu"):
             manager = TPUManager(**self.get("tpu/kwargs"))
             tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
-
-
             for i in range(self.get("distributed/kwargs/world_size")):
                 print(f"creating job-{i}")
                 trainer = Trainer(self)
