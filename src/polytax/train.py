@@ -173,6 +173,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
 
         if "switch" in self.get("model_config/model_type"):
+            # WIP: Make these names match in the Switch Transformer config, we need to make sure all the variables match
             model_config = self.get("model_config").copy()
             model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
             model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
@@ -311,8 +312,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.wandb_log(**results)
         if xla_found:
             self.bucket.touch(self.experiment_directory + "/heartbeat")
-
-        # print(results, flush=True)
 
     def _log_eval(self, all_preds, examples):
         results = {
