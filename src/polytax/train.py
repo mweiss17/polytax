@@ -362,38 +362,21 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
-    def _fetch_gradients(self, device=None):
-        gradients = []
-        if self.IS_MASTER_ORDINAL:
-            print("Fetching gradients")
-        for param_group in self.optim.__getstate__()['param_groups']:
-            for group, params in param_group.items():
-                if group == 'params':
-                    for p in params:
-                        if isinstance(p, torch.Tensor) and p.grad is not None:
-                            if device == torch.device("cpu"):
-                                print(f"detaching gradients from {p.size()}")
-                                gradients.append(p.detach().cpu())
-                                gradients.append(p.grad.cpu())
-                            else:
-                                gradients.append(p.grad.data)
-        print("done fetching grads")
-        return gradients
-
     def step_gradients(self):
         if xla_found:
-            gradients = self._fetch_gradients(device=self.device)
+            gradients = xm._fetch_gradients()
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
+            cpu_grads = []
+            print("cpu gradsing")
+            for grad in gradients:
+                cpu_grads.append(grad.detach().to("cpu"))
 
             print(
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
                     print("is master")
-                    for grad in gradients:
-                        print(f"grad: {grad.size()}")
-                        print(type(grad))
-                        grad = grad.detach().to("cpu")
+                    for grad in cpu_grads:
                         print("for grad in grad")
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
                         print("all reduce")
