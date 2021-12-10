@@ -374,7 +374,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
-            gradients = self._fetch_gradients(self.optim, device=self.device)
+            gradients = self._fetch_gradients(device=self.device)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
             print(
@@ -383,7 +383,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 xm.rendezvous("in-multi-host")
                 if self.IS_MASTER_ORDINAL:
                     print("is master")
-                    gradients = self._fetch_gradients(self.optim, device=torch.device("cpu"))
+                    gradients = self._fetch_gradients(device=torch.device("cpu"))
                     for grad in gradients:
                         print("for grad in grad")
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
