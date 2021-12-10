@@ -364,9 +364,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
+            print("gardients")
             gradients = xm._fetch_gradients(self.optim)
+            print("gradients fetched")
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-
+            print("first reduce")
             if self.IS_MULTI_HOST:
                 print("IS_MULTI_HOST, reducing gradients")
                 if self.IS_MASTER_ORDINAL:
