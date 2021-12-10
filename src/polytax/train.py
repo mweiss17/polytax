@@ -439,9 +439,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         x_hat = self.model(**x)
         loss = self.loss(x_hat.logits, x["labels"])
         loss.backward()
-
-        if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-            self.step_gradients()
+        # if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
+        xm.add_step_closure(self.step_gradients, args=(),)
 
         # Increment step count
         self.next_step()
