@@ -148,10 +148,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if xla_found and self.IS_MASTER_ORDINAL:
             xm.rendezvous("download_only_once")
 
+    # Is it needed to have train_state as an argument?
     def _build_train_tasks(self, train_state: "TrainState"):
         self.train_task = get_task(**self.get("dataset/kwargs"))
         self.train_loader = get_dataset(task=self.train_task, seed=self.get("seed"), GLOBAL_RANK=self.GLOBAL_RANK, NUM_SHARDS=self.NUM_SHARDS, device=self.device, **self.get("dataset/kwargs"),)
 
+    # Same question as _build_train_tasks
     def _build_eval_tasks(self, train_state: "TrainState"):
         self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
 
@@ -173,7 +175,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
 
         if "switch" in self.get("model_config/model_type"):
-            # WIP: Make these names match in the Switch Transformer config, we need to make sure all the variables match
+            # WIP: Make these names match in the Switch Transformer config, we need to make sure all the variables match.
+            # Right now (10/12) I don't think it's consistent yet, will update my fork asap
             model_config = self.get("model_config").copy()
             model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
             model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
@@ -191,7 +194,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.model.to(self.device)
 
     def _build_optimizer(self, train_state: "TrainState"):
-        # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
+        # No need to specify learning rate if using Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optim = eval(self.get("optim/name"))(
             self.model.parameters(), **self.get("optim/kwargs")
         )
@@ -266,6 +269,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Prepare to decode the labels
         extra_id = 32099
         ids_to_replace_in_preds = []
+
+        # Just curious if it'll be slow since we might iterate the whole thing to get to -100
         for idx, label in enumerate(labels_list):
             if label == -100:
                 ids_to_replace_in_preds.append(idx)
@@ -273,7 +278,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 extra_id -= 1
 
         extra_id = 32099
-        for idx, pred in enumerate(preds_list):
+        for idx, _ in enumerate(preds_list):
             if idx in ids_to_replace_in_preds:
                 preds_list[idx] = extra_id
                 extra_id -= 1
@@ -323,24 +328,20 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         for task in self.eval_tasks:
             # Extract the portion of decodes corresponding to this dataset
             predictions = []
-            text_preds = []
             targets = []
-            text_targets = []
             ex = examples[task.name][0]
             task_preds = all_preds[task.name][0]
             for i, preds in enumerate(task_preds):
                 predictions.append(task.postprocess_fn(preds, example=ex))
-                text_preds.append(self.tokenizer.decode([preds]))
                 text_target = self.tokenizer.decode(ex['labels'][i].tolist())
+                # I'm wondering if there's any better way instead of hardcoding the tasks
                 if task.name == "glue_qqp_v002" and text_target == "not":
                     text_target = "not_duplicate"
                 if task.name == "glue_mrpc_v002" and text_target == "not":
                     text_target = "not_equivalent"
                 targets.append(task.postprocess_fn(text_target, example=ex['input_ids'][i], is_target=True))
-                text_targets.append(text_target)
             for metric_fn in task.metric_fns:
                 try:
-                    # print(f"targets: {targets[0]}, predicted: {predictions[0]}")
                     metric_result = metric_fn(targets, predictions)
                     if np.isnan(list(metric_result.values())[0]):
                         metric_result[list(metric_result.keys())[0]] = 0.
@@ -473,6 +474,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         super(Nanny, self).__init__()
         self.auto_setup()
         self.jobs = []
+        # Do we need original_sigint?
         original_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self.exit_gracefully)
 
@@ -540,7 +542,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
     def exit_gracefully(self, signum, frame):
         print("Exiting gracefully")
-        for future, job in self.jobs:
+        for _, job in self.jobs:
             job.clean_up()
         sys.exit(0)
 
