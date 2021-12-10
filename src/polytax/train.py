@@ -371,11 +371,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.IS_MULTI_HOST:
                 if xm.is_master_ordinal():
                     print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
+                    cpu_grads = []
                     for gradient in gradients:
                         print("reducing...")
-                        dist.all_reduce(gradient.cpu().div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
+                        cpu_grad = gradient.cpu()
+                        dist.all_reduce(cpu_grad.div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
+                        cpu_grads.append(cpu_grad)
+                        print("reduced...")
                     print(f"dist reduced succesfully")
-                    gradients = [gradient.to(self.device) for gradient in gradients]
+                    gradients = [cpu_grad.to(self.device) for gradient in gradients]
                     # xm.all_reduce('sum', gradients, scale=1.0)
                 else:
                     self.optim.zero_grad()
