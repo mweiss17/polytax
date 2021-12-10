@@ -376,18 +376,23 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
                     print("is master")
+                    reduced_grads = []
                     for grad in cpu_grads:
                         print("for grad in grad")
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
                         print("all reduce")
                         grad /= self.GLOBAL_WORLD_SIZE
                         print("to device")
-                        grad = grad.to(self.device)
+                        reduced_grads.append(grad.to(self.device))
+                    xm.all_reduce('sum', reduced_grads, scale=1.0)
 
                     print("reduced.")
                     xm.rendezvous("dist-reduced")
                 else:
                     print("is not master")
+                    xm.all_reduce('sum', gradients, scale=1.0)
+                    self.optim.zero_grad()
+
                     xm.rendezvous("dist-reduced")
             # if self.IS_MULTI_HOST:
             #     if self.IS_MASTER_ORDINAL:
