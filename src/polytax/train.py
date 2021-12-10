@@ -372,7 +372,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     for p in params:
                         if isinstance(p, torch.Tensor) and p.grad is not None:
                             if device == torch.device("cpu"):
-                                gradients.append(p.grad.data.cpu().numpy())
+                                print(f"detaching gradients from {p.size()}")
+                                gradients.append(p.grad.detach().cpu().numpy())
                             else:
                                 gradients.append(p.grad.data)
         return gradients
