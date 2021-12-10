@@ -383,7 +383,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         grad = grad.to(self.device)
 
                     print("reduced.")
-
+                    xm.rendezvous("dist-reduced")
+                else:
+                    print("is not master")
+                    xm.rendezvous("dist-reduced")
             # if self.IS_MULTI_HOST:
             #     if self.IS_MASTER_ORDINAL:
             #         print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
