@@ -362,9 +362,19 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
         return loss
 
+    def _fetch_gradients(self, device=None):
+        gradients = []
+        for param_group in self.optim.__getstate__()['param_groups']:
+            for group, params in param_group.items():
+                if group == 'params':
+                    for p in params:
+                        if isinstance(p, torch.Tensor) and p.grad is not None:
+                            gradients.append(p.grad.data.to(device))
+        return gradients
+
     def step_gradients(self):
         if xla_found:
-            gradients = xm._fetch_gradients(self.optim)
+            gradients = self._fetch_gradients(self.optim, device=self.device)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
             print(
@@ -372,13 +382,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.IS_MULTI_HOST:
                 xm.rendezvous("in-multi-host")
                 if self.IS_MASTER_ORDINAL:
-                    xm.rendezvous("before-dist-reduced")
                     print("is master")
+                    gradients = self._fetch_gradients(self.optim, device=torch.device("cpu"))
                     for grad in gradients:
                         print("for grad in grad")
-                        grad = grad.to("cpu")
-                        # print("grad to cpu")
-                        grad = torch.ones(10)
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
                         print("all reduce")
                         grad /= self.GLOBAL_WORLD_SIZE
