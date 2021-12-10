@@ -366,10 +366,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if xla_found:
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-            cpu_grads = []
-            print("cpu gradsing")
-            for grad in gradients:
-                cpu_grads.append(grad.to(torch.device("cpu")))
 
             print(
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
@@ -378,11 +374,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print("is master")
                     for grad in cpu_grads:
                         print("for grad in grad")
-                        dist.all_reduce(grad, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(grad.cpu(), op=dist.ReduceOp.SUM)
                         print("all reduce")
                         grad /= self.GLOBAL_WORLD_SIZE
-                        print("to device")
-                        grad = grad.to(self.device)
 
                     print("reduced.")
                     xm.rendezvous("dist-reduced")
