@@ -370,7 +370,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
-                    xm.rendezvous("reducing")
                     print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
                     cpu_grads = []
                     for gradient in gradients:
@@ -380,11 +379,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         cpu_grads.append(cpu_grad)
                         print("reduced...")
                     print(f"dist reduced succesfully")
+
                     gradients = [cpu_grad.to(self.device) for gradient in gradients]
+                    xm.rendezvous("reducing")
                     # xm.all_reduce('sum', gradients, scale=1.0)
                 if not self.IS_MASTER_ORDINAL:
-                    xm.rendezvous("reducing")
                     self.optim.zero_grad()
+                    xm.rendezvous("reducing")
+
                     print(f"not master ordinal, reducing gradients")
                     # xm.all_reduce('sum', gradients, scale=1.0)
         xm.mark_step()
