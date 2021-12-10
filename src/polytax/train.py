@@ -364,7 +364,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
-            gradients = xm._fetch_gradients()
+            gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             cpu_grads = []
             print("cpu gradsing")
