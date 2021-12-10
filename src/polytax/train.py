@@ -371,11 +371,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 if group == 'params':
                     for p in params:
                         if isinstance(p, torch.Tensor) and p.grad is not None:
-                            if self.IS_MASTER_ORDINAL:
-                                print(f"Fetching gradient for {p.size()}")
+                            if device == torch.device("cpu"):
                                 gradients.append(p.grad.data.cpu().numpy())
                             else:
-                                gradients.append(p.grad.data.to(device))
+                                gradients.append(p.grad.data)
         return gradients
 
     def step_gradients(self):
