@@ -372,15 +372,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             if self.IS_MULTI_HOST:
                 print(f"IS_MULTI_HOST, reducing gradients: {gradients[0]}")
                 if self.IS_MASTER_ORDINAL:
-                    dist.all_reduce(gradients, op=dist.ReduceOp.SUM)
+                    for gradient in gradients:
+                        dist.all_reduce(gradient.div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
                     print(f"IS_MASTER_ORDINAL, reducing gradients: {gradients[0]}")
-                    self.optim.zero_grad()
-                    xm.all_reduce('sum', final_grads, scale=1.0)
+                    xm.all_reduce('sum', gradients, scale=1.0)
                 else:
                     self.optim.zero_grad()
                     print(f"not master ordinal, reducing gradients: {gradients[0]}")
                     xm.all_reduce('sum', gradients, scale=1.0)
-            print(f"final gradients: {gradients[0]}")
+
+            if self.IS_MASTER_ORDINAL:
+                print(f"final gradients: {gradients[0]}")
 
             xm.mark_step()
         self.optim.step()
