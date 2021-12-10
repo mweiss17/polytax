@@ -104,8 +104,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.NUM_SHARDS = self.GLOBAL_WORLD_SIZE * self.LOCAL_WORLD_SIZE
         self.LOCAL_RANK = int(xm.get_ordinal()) if xla_found else 0
         self.GLOBAL_RANK = int(self.get("distributed/kwargs/rank", 0)) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
-        self.IS_MASTER_ORDINAL = xm.is_master_ordinal() if xla_found else True
+        self.IS_MASTER_ORDINAL = self.LOCAL_RANK == 0
         self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
+        print(f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
 
     def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
@@ -363,14 +364,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
-            xm.mark_step()
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-            print(f"first reduce, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
+            print(f"reduce, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {self.IS_MASTER_ORDINAL}")
             if self.IS_MULTI_HOST:
-                print(
-                    f"in multi-host, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
-
                 if xm.is_master_ordinal():
                     print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
                     for gradient in gradients:
@@ -383,6 +380,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     self.optim.zero_grad()
                     print(f"not master ordinal, reducing gradients")
                     # xm.all_reduce('sum', gradients, scale=1.0)
+        xm.mark_step()
 
         self.optim.step()
         self.optim.zero_grad()
