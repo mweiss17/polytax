@@ -133,6 +133,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 # GLOO for CPU comms, NCCL for GPU comms
                 print(f"initializing dist process group: distributed/kwargs={self.get('distributed/kwargs')}")
                 dist.init_process_group(**self.get("distributed/kwargs"))
+                print("distributed initialized")
 
     def _build_tasks(self, train_state: "TrainState"):
 
@@ -362,9 +363,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
-            print("gardients")
             gradients = xm._fetch_gradients(self.optim)
-            print("gradients fetched")
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print("first reduce")
             if self.IS_MULTI_HOST:
