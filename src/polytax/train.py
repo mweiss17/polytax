@@ -416,6 +416,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             #         print(f"not master ordinal, reducing gradients")
             #         # xm.all_reduce('sum', gradients, scale=1.0)
         print("done reducing gradients, stepping")
+        xm.rendezvous("stepping")
         self.optim.step()
         xm.mark_step()
         self.optim.zero_grad()
