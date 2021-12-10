@@ -389,7 +389,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print("reduced.")
                 else:
                     print("is not master")
-                    xm.all_reduce('sum', gradients, scale=1.0)
+                    xm.all_reduce('sum', [grad.zero_() for grad in gradients], scale=1.0)
                     self.optim.zero_grad()
             # if self.IS_MULTI_HOST:
             #     if self.IS_MASTER_ORDINAL:
