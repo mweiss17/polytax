@@ -373,9 +373,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         if isinstance(p, torch.Tensor) and p.grad is not None:
                             if device == torch.device("cpu"):
                                 print(f"detaching gradients from {p.size()}")
-                                import copy
-                                gradients.append(copy.copy(p.grad).cpu())
-                                # gradients.append(p.detach().cpu())
+                                gradients.append(p.detach().cpu())
+                                gradients.append(p.grad.cpu())
                             else:
                                 gradients.append(p.grad.data)
         print("done fetching grads")
@@ -392,8 +391,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 xm.rendezvous("in-multi-host")
                 if self.IS_MASTER_ORDINAL:
                     print("is master")
-                    gradients = self._fetch_gradients(device=torch.device("cpu"))
                     for grad in gradients:
+                        grad = grad.detach().to("cpu")
                         print("for grad in grad")
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
                         print("all reduce")
