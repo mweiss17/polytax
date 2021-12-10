@@ -125,15 +125,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
-        print(
-            f"Using {self.GLOBAL_WORLD_SIZE} hosts. Each host has {self.LOCAL_WORLD_SIZE} devices. IS_MULTI_HOST={self.IS_MULTI_HOST}")
-        print(f"distributed/kwargs={self.get('distributed/kwargs')}")
+        print(f"Using {self.GLOBAL_WORLD_SIZE} hosts. Each host has {self.LOCAL_WORLD_SIZE} devices. IS_MULTI_HOST={self.IS_MULTI_HOST}, and IS_MASTER_ORDINAL={self.IS_MASTER_ORDINAL}")
         if self.IS_MASTER_ORDINAL:
             if self.get("use_wandb"):
                 self.initialize_wandb(resume=True)
-
             if self.IS_MULTI_HOST:
                 # GLOO for CPU comms, NCCL for GPU comms
+                print(f"initializing dist process group: distributed/kwargs={self.get('distributed/kwargs')}")
                 dist.init_process_group(**self.get("distributed/kwargs"))
 
     def _build_tasks(self, train_state: "TrainState"):
@@ -370,7 +368,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print("first reduce")
             if self.IS_MULTI_HOST:
-                print(f"IS_MULTI_HOST, reducing gradients: {gradients[0]}")
                 if self.IS_MASTER_ORDINAL:
                     print(f"IS_MASTER_ORDINAL, reducing gradients: {gradients[0]}, dist: {dist.get_rank()} / {dist.get_world_size()}")
                     for gradient in gradients:
@@ -380,13 +377,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     gradients = [gradient.to(self.device) for gradient in gradients]
                     print(f"gradients: {gradients[0]}")
                     xm.all_reduce('sum', gradients, scale=1.0)
+                    print(f"final gradients: {gradients[0]}")
                 else:
                     self.optim.zero_grad()
                     print(f"not master ordinal, reducing gradients: {gradients[0]}")
                     xm.all_reduce('sum', gradients, scale=1.0)
-
-            if self.IS_MASTER_ORDINAL:
-                print(f"final gradients: {gradients[0]}")
 
             xm.mark_step()
         self.optim.step()
