@@ -378,11 +378,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         dist.all_reduce(gradient.cpu().div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
                     print(f"dist reduced succesfully")
                     gradients = [gradient.to(self.device) for gradient in gradients]
-                    xm.all_reduce('sum', gradients, scale=1.0)
+                    # xm.all_reduce('sum', gradients, scale=1.0)
                 else:
                     self.optim.zero_grad()
                     print(f"not master ordinal, reducing gradients")
-                    xm.all_reduce('sum', gradients, scale=1.0)
+                    # xm.all_reduce('sum', gradients, scale=1.0)
 
         self.optim.step()
         self.optim.zero_grad()
