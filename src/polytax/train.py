@@ -364,11 +364,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _fetch_gradients(self, device=None):
         gradients = []
+        if self.IS_MASTER_ORDINAL:
+            print("Fetching gradients")
         for param_group in self.optim.__getstate__()['param_groups']:
             for group, params in param_group.items():
                 if group == 'params':
                     for p in params:
                         if isinstance(p, torch.Tensor) and p.grad is not None:
+                            if self.IS_MASTER_ORDINAL:
+                                print(f"Fetching gradient for {p.size()}")
                             gradients.append(p.grad.data.to(device))
         return gradients
 
@@ -395,7 +399,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print("reduced.")
                     xm.rendezvous("dist-reduced")
                 else:
-                    xm.rendezvous("before-dist-reduced")
                     print("is not master")
                     xm.rendezvous("dist-reduced")
             # if self.IS_MULTI_HOST:
