@@ -365,8 +365,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if xla_found:
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-            print("first reduce")
+            print(f"first reduce, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
             if self.IS_MULTI_HOST:
+                print(
+                    f"in multi-host, multi-host: {self.LOCAL_WORLD_SIZE}, IS_MULTI_HOST: {self.IS_MULTI_HOST}, IS_MASTER: {xm.is_master_ordinal()}")
+
                 if self.IS_MASTER_ORDINAL:
                     print(f"IS_MASTER_ORDINAL, reducing gradients: {gradients[0]}, dist: {dist.get_rank()} / {dist.get_world_size()}")
                     for gradient in gradients:
