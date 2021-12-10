@@ -388,10 +388,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print(
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
             if self.IS_MULTI_HOST:
-                xm.rendezvous("in-multi-host")
                 if self.IS_MASTER_ORDINAL:
                     print("is master")
                     for grad in gradients:
+                        print(f"grad: {grad.size()}")
+                        print(type(grad))
                         grad = grad.detach().to("cpu")
                         print("for grad in grad")
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
