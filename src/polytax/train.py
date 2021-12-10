@@ -376,7 +376,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print("is master")
                     for grad in gradients:
                         print("for grad in grad")
-                        # grad = grad.to("cpu")
+                        grad = grad.to("cpu")
                         # print("grad to cpu")
                         grad = torch.ones(10)
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
