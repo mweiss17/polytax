@@ -370,7 +370,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.rendezvous('first_reduce')
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished")
-
+            if self.IS_MASTER_ORDINAL:
+                print(f"xm.xrt_world_size: {xm.xrt_world_size()}, xm.get_ordinal: {xm.get_ordinal()}, torch_xla._XLAC._xla_get_replication_devices_count(): {torch_xla._XLAC._xla_get_replication_devices_count()}")
             cpu_grads = []
             for grad in gradients:
                 cpu_grads.append(grad.detach().cpu())
