@@ -391,7 +391,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 else:
                     print("is not master")
                     grads = [grad.detach().zero_() for grad in gradients]
-        xm.all_reduce('sum', grads, scale=1.0)
+        # xm.all_reduce('sum', grads, scale=1.0)
         print("done reducing gradients, stepping")
         xm.rendezvous("stepping")
         self.optim.step()
