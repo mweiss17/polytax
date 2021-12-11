@@ -368,8 +368,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             gradients = xm._fetch_gradients(self.optim)
             print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce begun")
             xm.rendezvous('first_reduce')
-            if self.IS_MASTER_ORDINAL:
-                print(f"{self._config}")
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished")
 
@@ -390,7 +388,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients")
                     grads = [grad.detach().zero_() for grad in gradients]
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce begun")
-
+        xm.rendezvous('second_reduce')
         xm.all_reduce('sum', grads, scale=1.0)
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce done")
         self.optim.step()
