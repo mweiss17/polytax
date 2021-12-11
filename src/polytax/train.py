@@ -364,15 +364,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
-            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. fetching grads")
             gradients = xm._fetch_gradients(self.optim)
-            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce begun")
             xm.rendezvous('first_reduce')
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished")
+            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished, {gradients[0].sum()}")
             cpu_grads = []
             for grad in gradients:
-                cpu_grads.append(grad.detach().cpu())
+                cpu_grads.append(grad.cpu())
 
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
@@ -383,16 +381,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         reduced_grads.append(grad)
                     grads = [grad.to(self.device) for grad in reduced_grads]
                     # grads = [grad.zero_() for grad in gradients]
-                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete, {grads}")
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete,  {grads[0].sum()}")
                 else:
-                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients")
                     grads = [grad.zero_() for grad in gradients]
-                    print(grads)
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients  {grads[0].sum()}")
+
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce begun")
         xm.rendezvous('second_reduce')
         xm.all_reduce('sum', grads, scale=1.0)
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce done")
-        self.optim.step()
+        # self.optim.step()
+
         self.optim.zero_grad()
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. step closure done")
 
