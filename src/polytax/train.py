@@ -369,7 +369,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             cpu_grads = []
             print("cpu gradsing")
             for grad in gradients:
-                cpu_grads.append(grad.cpu())
+                cpu_grads.append(grad.detach().cpu())
 
             print(
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
@@ -390,7 +390,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print("reduced.")
                 else:
                     print("is not master")
-                    grads = [grad.zero_() for grad in gradients]
+                    grads = [grad.detach().zero_() for grad in gradients]
         xm.all_reduce('sum', grads, scale=1.0)
         print("done reducing gradients, stepping")
         xm.rendezvous("stepping")
