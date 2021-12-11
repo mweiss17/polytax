@@ -389,7 +389,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     grads = [grad.detach().zero_() for grad in gradients]
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce begun")
         xm.rendezvous('second_reduce')
-        xm.all_reduce('sum', grads, scale=1.0)
+        # xm.all_reduce('sum', grads, scale=1.0)
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce done")
         self.optim.step()
         self.optim.zero_grad()
