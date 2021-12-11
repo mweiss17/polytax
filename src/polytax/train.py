@@ -129,11 +129,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.IS_GLOBAL_MASTER:
             if self.get("use_wandb"):
                 self.initialize_wandb(resume=True)
-            if self.IS_MULTI_HOST:
-                # GLOO for CPU comms, NCCL for GPU comms
-                print(f"initializing dist process group: distributed/kwargs={self.get('distributed/kwargs')}")
-                dist.init_process_group(**self.get("distributed/kwargs"))
-                print("distributed initialized")
+        if self.IS_MULTI_HOST and self.IS_LOCAL_MASTER:
+            # GLOO for CPU comms, NCCL for GPU comms
+            print(f"initializing dist process group: distributed/kwargs={self.get('distributed/kwargs')}")
+            dist.init_process_group(**self.get("distributed/kwargs"))
+            print("distributed initialized")
 
     def _build_tasks(self, train_state: "TrainState"):
 
