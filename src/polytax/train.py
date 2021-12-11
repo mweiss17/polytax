@@ -384,36 +384,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         grad /= self.GLOBAL_WORLD_SIZE
                         print("to device")
                         reduced_grads.append(grad.to(self.device))
+                    grads = reduced_grads
                     # xm.all_reduce('sum', reduced_grads, scale=1.0)
 
                     print("reduced.")
                 else:
                     print("is not master")
-                    # xm.all_reduce('sum', [grad.zero_() for grad in gradients], scale=1.0)
-            # if self.IS_MULTI_HOST:
-            #     if self.IS_MASTER_ORDINAL:
-            #         print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
-            #         grad = torch.ones(10)
-            #         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
-            #         grad.to(self.device)
-            #         # cpu_grads = []
-            #         # for gradient in gradients:
-            #         #     print("reducing...")
-            #         #     cpu_grad = gradient.cpu()
-            #         #     dist.all_reduce(cpu_grad.div_(self.GLOBAL_WORLD_SIZE), op=dist.ReduceOp.SUM)
-            #         #     cpu_grads.append(cpu_grad)
-            #         #     print("reduced...")
-            #         print(f"dist reduced succesfully")
-            #
-            #         # gradients = [cpu_grad.to(self.device) for cpu_grad in cpu_grads]
-            #         xm.rendezvous("reducing")
-            #         # xm.all_reduce('sum', gradients, scale=1.0)
-            #     if not self.IS_MASTER_ORDINAL:
-            #         self.optim.zero_grad()
-            #         xm.rendezvous("reducing")
-            #
-            #         print(f"not master ordinal, reducing gradients")
-            #         # xm.all_reduce('sum', gradients, scale=1.0)
+                    grads = [grad.zero_() for grad in gradients]
+        xm.all_reduce('sum', grads, scale=1.0)
         print("done reducing gradients, stepping")
         xm.rendezvous("stepping")
         self.optim.step()
