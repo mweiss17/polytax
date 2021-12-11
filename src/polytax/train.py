@@ -381,10 +381,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
                         grad /= self.GLOBAL_WORLD_SIZE
                         reduced_grads.append(grad)
-                    print(reduced_grads)
                     grads = [grad.to(self.device) for grad in reduced_grads]
                     # grads = [grad.zero_() for grad in gradients]
-                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete")
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete, {grads}")
                 else:
                     print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients")
                     grads = [grad.zero_() for grad in gradients]
