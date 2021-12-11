@@ -190,7 +190,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.model.to(self.device)
 
     def _build_optimizer(self, train_state: "TrainState"):
-        # No need to specify learning rate in Adafactor: https://arxiv.org/pdf/1804.04235.pdf
         self.optim = eval(self.get("optim/name"))(
             self.model.parameters(), **self.get("optim/kwargs")
         )
@@ -245,7 +244,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             # only push to storage if you are the master ordinal
             path = f"{self.experiment_directory}/trainstate/{self.get('dataset/kwargs/name')}-{self.step}.pt"
             self.bucket.upload(path, buffer, overwrite=True)
-        else:
+        elif not xla_found:
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
             torch.save(buffer, path)
 
@@ -363,14 +362,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
+            print("Running XLA optimization")
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             cpu_grads = []
             for grad in gradients:
                 cpu_grads.append(grad.cpu())
-
             if self.IS_MULTI_HOST:
-                if self.IS_GLOBAL_MASTER:
+                if self.IS_LOCAL_MASTER:
                     reduced_grads = []
                     for grad in cpu_grads:
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
@@ -387,6 +386,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     @register_default_dispatch
     def run(self, train_state):
         self._build(train_state)
+        print("starting to train")
         if self.get("run_training"):
             for x in self.train_loader:
                 if self.get("num_train_steps") == self.step:
