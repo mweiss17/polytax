@@ -362,7 +362,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
-            print("Running XLA optimization")
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             cpu_grads = []
@@ -386,7 +385,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     @register_default_dispatch
     def run(self, train_state):
         self._build(train_state)
-        print("starting to train")
         if self.get("run_training"):
             for x in self.train_loader:
                 if self.get("num_train_steps") == self.step:
