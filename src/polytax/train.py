@@ -390,9 +390,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         xm.all_reduce('sum', grads, scale=1.0)
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce done")
-        # xm.rendezvous("stepping")
         self.optim.step()
         self.optim.zero_grad()
+        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. step closure done")
+
 
 
     @register_default_dispatch
@@ -411,14 +412,18 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def train(self, x):
         self.model.train()
+        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. model forward begun")
 
         x_hat = self.model(**x)
         loss = self.loss(x_hat.logits, x["labels"])
+        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. loss backward begun")
         loss.backward()
         # if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
         xm.add_step_closure(self.step_gradients, args=(),)
         # self.step_gradients()
         # Increment step count
+        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. mark_step begun")
+
         self.next_step()
         xm.mark_step()
         self.tracker.add(1)
