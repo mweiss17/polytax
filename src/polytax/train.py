@@ -375,16 +375,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 cpu_grads.append(grad.detach().cpu())
 
             if self.IS_MULTI_HOST:
-                # if self.IS_MASTER_ORDINAL:
-                #     reduced_grads = []
-                #     for grad in cpu_grads:
-                #         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
-                #         grad /= self.GLOBAL_WORLD_SIZE
-                #         reduced_grads.append(grad.to(self.device))
-                #     grads = reduced_grads
-                #     print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete")
-                # else:
-                #     print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients")
+                if self.IS_MASTER_ORDINAL:
+                    # reduced_grads = []
+                    # for grad in cpu_grads:
+                    #     dist.all_reduce(grad, op=dist.ReduceOp.SUM)
+                    #     grad /= self.GLOBAL_WORLD_SIZE
+                    #     reduced_grads.append(grad.to(self.device))
+                    # grads = reduced_grads
+                    grads = [grad.detach().zero_() for grad in gradients]
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete")
+                else:
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients")
                 grads = [grad.detach().zero_() for grad in gradients]
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce begun")
         xm.rendezvous('second_reduce')
@@ -419,8 +420,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. loss backward begun")
         loss.backward()
         # if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-        print(
-            f"xm.xrt_world_size: {xm.xrt_world_size()}, xm.get_ordinal: {xm.get_ordinal()}, torch_xla._XLAC._xla_get_replication_devices_count(): {torch_xla._XLAC._xla_get_replication_devices_count()}")
 
         # xm.add_step_closure(self.step_gradients, args=(),)
         self.step_gradients()
