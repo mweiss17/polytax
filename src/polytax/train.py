@@ -367,7 +367,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             cpu_grads = []
-            print("cpu gradsing")
             for grad in gradients:
                 cpu_grads.append(grad.detach().cpu())
 
@@ -375,14 +374,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
-                    print("is master")
                     reduced_grads = []
                     for grad in cpu_grads:
-                        print("for grad in grad")
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
-                        print("all reduce")
                         grad /= self.GLOBAL_WORLD_SIZE
-                        print("to device")
                         reduced_grads.append(grad.to(self.device))
                     grads = reduced_grads
                     # xm.all_reduce('sum', reduced_grads, scale=1.0)
@@ -391,7 +386,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 else:
                     print("is not master")
                     grads = [grad.detach().zero_() for grad in gradients]
-        # xm.all_reduce('sum', grads, scale=1.0)
+        xm.all_reduce('sum', grads, scale=1.0)
         print("done reducing gradients, stepping")
         xm.rendezvous("stepping")
         self.optim.step()
