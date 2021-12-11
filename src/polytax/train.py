@@ -364,14 +364,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def step_gradients(self):
         if xla_found:
+            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. fetching grads")
             gradients = xm._fetch_gradients(self.optim)
+            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce begun")
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
+            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished")
+
             cpu_grads = []
             for grad in gradients:
                 cpu_grads.append(grad.detach().cpu())
 
-            print(
-                f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
                     reduced_grads = []
@@ -380,15 +382,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         grad /= self.GLOBAL_WORLD_SIZE
                         reduced_grads.append(grad.to(self.device))
                     grads = reduced_grads
-                    # xm.all_reduce('sum', reduced_grads, scale=1.0)
-
-                    print("reduced.")
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete")
                 else:
-                    print("is not master")
+                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. zeroing gradients")
                     grads = [grad.detach().zero_() for grad in gradients]
+        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce begun")
+
         xm.all_reduce('sum', grads, scale=1.0)
-        print("done reducing gradients, stepping")
-        xm.rendezvous("stepping")
+        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. second xm reduce done")
+        # xm.rendezvous("stepping")
         self.optim.step()
         self.optim.zero_grad()
 
