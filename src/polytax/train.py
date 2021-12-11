@@ -104,9 +104,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.NUM_SHARDS = self.GLOBAL_WORLD_SIZE * self.LOCAL_WORLD_SIZE
         self.LOCAL_RANK = int(xm.get_ordinal()) if xla_found else 0
         self.GLOBAL_RANK = int(self.get("distributed/kwargs/rank", 0)) * self.LOCAL_WORLD_SIZE + self.LOCAL_RANK
-        self.IS_MASTER_ORDINAL = self.LOCAL_RANK == 0
+        self.IS_LOCAL_MASTER = self.LOCAL_RANK == 0
+        self.IS_GLOBAL_MASTER = self.GLOBAL_RANK == 0
         self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
-        print(f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_WORLD_SIZE {self.GLOBAL_WORLD_SIZE}, LOCAL_RANK {self.LOCAL_RANK}, GLOBAL_RANK {self.GLOBAL_RANK}, IS_MASTER_ORDINAL {self.IS_MASTER_ORDINAL}, IS_MULTI_HOST {self.IS_MULTI_HOST}")
 
     def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
@@ -126,8 +126,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
-        print(f"Using {self.GLOBAL_WORLD_SIZE} hosts. Each host has {self.LOCAL_WORLD_SIZE} devices. IS_MULTI_HOST={self.IS_MULTI_HOST}, and IS_MASTER_ORDINAL={self.IS_MASTER_ORDINAL}")
-        if self.IS_MASTER_ORDINAL:
+        if self.IS_GLOBAL_MASTER:
             if self.get("use_wandb"):
                 self.initialize_wandb(resume=True)
             if self.IS_MULTI_HOST:
@@ -138,7 +137,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _build_tasks(self, train_state: "TrainState"):
 
-        if xla_found and not self.IS_MASTER_ORDINAL:
+        if xla_found and not self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
 
         if self.get("run_training"):
@@ -146,7 +145,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_evaluation"):
             self._build_eval_tasks(train_state)
 
-        if xla_found and self.IS_MASTER_ORDINAL:
+        if xla_found and self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
 
     def _build_train_tasks(self, train_state: "TrainState"):
@@ -242,7 +241,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def checkpoint(self):
         # this needs to happen on each TPU core because it has xm.save has a rendezvous in it
         buffer = self.train_state.serialize()
-        if xla_found and self.IS_MASTER_ORDINAL:
+        if xla_found and self.IS_GLOBAL_MASTER:
             # only push to storage if you are the master ordinal
             path = f"{self.experiment_directory}/trainstate/{self.get('dataset/kwargs/name')}-{self.step}.pt"
             self.bucket.upload(path, buffer, overwrite=True)
@@ -371,7 +370,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 cpu_grads.append(grad.cpu())
 
             if self.IS_MULTI_HOST:
-                if self.IS_MASTER_ORDINAL:
+                if self.IS_GLOBAL_MASTER:
                     reduced_grads = []
                     for grad in cpu_grads:
                         dist.all_reduce(grad, op=dist.ReduceOp.SUM)
@@ -381,7 +380,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 else:
                     grads = [grad.zero_() for grad in gradients]
         loss = xm.optimizer_step(self.optim, barrier=True)
-
         self.optim.zero_grad()
 
 
@@ -402,24 +400,18 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def train(self, x):
         self.model.train()
-        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. model forward begun")
 
         x_hat = self.model(**x)
         loss = self.loss(x_hat.logits, x["labels"])
-        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. loss backward begun")
         loss.backward()
-        # if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
 
-        # xm.add_step_closure(self.step_gradients, args=(),)
         self.step_gradients()
-        # Increment step count
-        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. mark_step begun")
 
         self.next_step()
         xm.mark_step()
         self.tracker.add(1)
 
-        if self.log_scalars_now and self.IS_MASTER_ORDINAL:
+        if self.log_scalars_now and self.IS_GLOBAL_MASTER:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(
