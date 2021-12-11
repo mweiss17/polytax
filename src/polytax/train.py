@@ -395,7 +395,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         print("done reducing gradients, stepping")
         xm.rendezvous("stepping")
         self.optim.step()
-        # xm.mark_step()
         self.optim.zero_grad()
 
 
@@ -420,10 +419,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = self.loss(x_hat.logits, x["labels"])
         loss.backward()
         # if (self.step + 1) % self.get("gradient_accumulation_steps", 1) == 0:
-        # xm.add_step_closure(self.step_gradients, args=(),)
-        self.step_gradients()
+        xm.add_step_closure(self.step_gradients, args=(),)
+        # self.step_gradients()
         # Increment step count
         self.next_step()
+        xm.mark_step()
         self.tracker.add(1)
 
         # if self.log_scalars_now and self.IS_MASTER_ORDINAL:
