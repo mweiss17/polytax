@@ -365,10 +365,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def step_gradients(self):
         if xla_found:
             gradients = xm._fetch_gradients(self.optim)
-            if self.IS_MASTER_ORDINAL:
-                print(f"Gradients: {gradients[0].sum()}")
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
-            print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished, {gradients[0].sum()}")
             cpu_grads = []
             for grad in gradients:
                 cpu_grads.append(grad.cpu())
@@ -381,16 +378,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         grad /= self.GLOBAL_WORLD_SIZE
                         reduced_grads.append(grad)
                     grads = [grad.to(self.device) for grad in reduced_grads]
-                    print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete,  {grads[0].sum()}")
                 else:
                     grads = [grad.zero_() for grad in gradients]
-        if self.IS_MASTER_ORDINAL:
-            print(f"after dist reduce: {gradients[0].sum()}")
         loss = xm.optimizer_step(self.optim, barrier=True)
-        if self.IS_MASTER_ORDINAL:
-            print(f"after optim step: {gradients[0].sum()}")
+
         self.optim.zero_grad()
-        print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. step closure done")
 
 
 
@@ -427,15 +419,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         xm.mark_step()
         self.tracker.add(1)
 
-        # if self.log_scalars_now and self.IS_MASTER_ORDINAL:
-        #     # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
-        #     if xla_found:
-        #         xm.add_step_closure(
-        #             self._log_train, args=(x, x_hat), run_async=True
-        #         )
-        #     # Otherwise just call the function to log directly
-        #     else:
-        #         self._log_train(x, x_hat)
+        if self.log_scalars_now and self.IS_MASTER_ORDINAL:
+            # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
+            if xla_found:
+                xm.add_step_closure(
+                    self._log_train, args=(x, x_hat), run_async=True
+                )
+            # Otherwise just call the function to log directly
+            else:
+                self._log_train(x, x_hat)
 
         # if self.checkpoint_now:
         #     self.checkpoint()
