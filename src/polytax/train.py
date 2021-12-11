@@ -376,11 +376,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
             if self.IS_MULTI_HOST:
                 if self.IS_MASTER_ORDINAL:
-                    # reduced_grads = []
-                    # for grad in cpu_grads:
-                    #     dist.all_reduce(grad, op=dist.ReduceOp.SUM)
-                    #     grad /= self.GLOBAL_WORLD_SIZE
-                    #     reduced_grads.append(grad.to(self.device))
+                    reduced_grads = []
+                    for grad in cpu_grads:
+                        dist.all_reduce(grad, op=dist.ReduceOp.SUM)
+                        grad /= self.GLOBAL_WORLD_SIZE
+                        reduced_grads.append(grad.to(self.device))
                     # grads = reduced_grads
                     grads = [grad.zero_() for grad in gradients]
                     print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete")
