@@ -442,8 +442,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         #     else:
         #         self._log_train(x, x_hat)
 
-        if self.checkpoint_now:
-            self.checkpoint()
+        # if self.checkpoint_now:
+        #     self.checkpoint()
 
     def evaluate(self, one_sample=True):
         self.model.eval()
