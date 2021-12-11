@@ -384,12 +384,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         grad /= self.GLOBAL_WORLD_SIZE
                         print("to device")
                         reduced_grads.append(grad.to(self.device))
-                    xm.all_reduce('sum', reduced_grads, scale=1.0)
+                    # xm.all_reduce('sum', reduced_grads, scale=1.0)
 
                     print("reduced.")
                 else:
                     print("is not master")
-                    xm.all_reduce('sum', [grad.zero_() for grad in gradients], scale=1.0)
+                    # xm.all_reduce('sum', [grad.zero_() for grad in gradients], scale=1.0)
             # if self.IS_MULTI_HOST:
             #     if self.IS_MASTER_ORDINAL:
             #         print(f"IS_MASTER_ORDINAL, reducing gradients, dist: {dist.get_rank()} / {dist.get_world_size()}")
