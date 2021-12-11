@@ -365,7 +365,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def step_gradients(self):
         if xla_found:
             gradients = xm._fetch_gradients(self.optim)
-            xm.rendezvous('first_reduce')
+            if self.IS_MASTER_ORDINAL:
+                print(f"Gradients: {gradients[0].sum()}")
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. first xm reduce finished, {gradients[0].sum()}")
             cpu_grads = []
@@ -383,12 +384,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. dist grad computation complete,  {grads[0].sum()}")
                 else:
                     grads = [grad.zero_() for grad in gradients]
-
-        xm.rendezvous('second_reduce')
-        xm.all_reduce('sum', grads, scale=1.0)
+        if self.IS_MASTER_ORDINAL:
+            print(f"after dist reduce: {gradients[0].sum()}")
         loss = xm.optimizer_step(self.optim, barrier=True)
-        # self.optim.step()
-
+        if self.IS_MASTER_ORDINAL:
+            print(f"after optim step: {gradients[0].sum()}")
         self.optim.zero_grad()
         print(f"rank: {self.LOCAL_RANK}, step:  {self.step}. step closure done")
 
