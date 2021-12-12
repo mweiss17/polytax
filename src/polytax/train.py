@@ -362,22 +362,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return loss
 
     def step_gradients(self):
-        if xla_found:
+        if xla_found and self.IS_MULTI_HOST:
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
             cpu_grads = []
+            print("putting gradients back on cpu")
             for grad in gradients:
                 cpu_grads.append(grad.cpu())
-            if self.IS_MULTI_HOST:
-                if self.IS_LOCAL_MASTER:
-                    reduced_grads = []
-                    for grad in cpu_grads:
-                        dist.all_reduce(grad, op=dist.ReduceOp.SUM)
-                        grad /= self.GLOBAL_WORLD_SIZE
-                        reduced_grads.append(grad)
-                    grads = [grad.to(self.device) for grad in reduced_grads]
-                else:
-                    grads = [grad.zero_() for grad in gradients]
+            if self.IS_LOCAL_MASTER:
+                reduced_grads = []
+                for grad in cpu_grads:
+                    dist.all_reduce(grad, op=dist.ReduceOp.SUM)
+                    grad /= self.GLOBAL_WORLD_SIZE
+                    reduced_grads.append(grad)
+                grads = [grad.to(self.device) for grad in reduced_grads]
+            else:
+                grads = [grad.zero_() for grad in gradients]
         if xla_found:
             loss = xm.optimizer_step(self.optim, barrier=True)
         else:
