@@ -367,13 +367,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
             if self.IS_LOCAL_MASTER:
+                cpu_grads = []
                 print("putting gradients back on cpu")
-                reduced_grads = []
                 for grad in gradients:
-                    print(f"grad")
-                    dist.all_reduce(grad.cpu(), op=dist.ReduceOp.SUM)
+                    cpu_grads.append(grad.cpu())
+                reduced_grads = []
+                for grad in cpu_grads:
+                    dist.all_reduce(grad, op=dist.ReduceOp.SUM)
                     grad /= self.GLOBAL_WORLD_SIZE
-                    reduced_grads.append(grad.to(self.device))
+                    reduced_grads.append(grad)
+                grads = [grad.to(self.device) for grad in reduced_grads]
             else:
                 grads = [grad.zero_() for grad in gradients]
         if xla_found:
