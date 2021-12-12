@@ -178,11 +178,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             # WIP: Make these names match in the Switch Transformer config, we need to make sure all the variables match.
             # Right now (10/12) I don't think it's consistent yet, will update my fork asap
             model_config = self.get("model_config").copy()
-            model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
-            model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
-            model_config["LOCAL_RANK"] = self.LOCAL_RANK
-            model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
-            model_config["NUM_SHARDS"] = self.NUM_SHARDS
+            model_config["local_world_size"] = self.LOCAL_WORLD_SIZE
+            model_config["global_world_size"] = self.GLOBAL_WORLD_SIZE
+            model_config["local_rank"] = self.LOCAL_RANK
+            model_config["global_rank"] = self.GLOBAL_RANK
+            model_config["num_shards"] = self.NUM_SHARDS
             model_config["xla_found"] = xla_found
             model_config = SwitchConfig.from_dict(model_config)
 
@@ -209,9 +209,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     @property
     def losses_state_dict(self):
-        return {}
-        # TODO re-add
-        # return {"loss": self.loss.state_dict()}
+        if self.loss is not None:
+            return {"loss": self.loss.state_dict()}
 
     @property
     def optims_state_dict(self):
