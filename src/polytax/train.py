@@ -378,7 +378,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     grads = [grad.to(self.device) for grad in reduced_grads]
                 else:
                     grads = [grad.zero_() for grad in gradients]
-        loss = xm.optimizer_step(self.optim, barrier=True)
+        if xla_found:
+            loss = xm.optimizer_step(self.optim, barrier=True)
+        else:
+            self.optim.step()
         self.optim.zero_grad()
 
 
@@ -407,7 +410,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.step_gradients()
 
         self.next_step()
-        xm.mark_step()
+        if xla_found:
+            xm.mark_step()
         self.tracker.add(1)
 
         if self.log_scalars_now and self.IS_GLOBAL_MASTER:
