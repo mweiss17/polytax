@@ -366,11 +366,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
 
+            cpu_grads = []
+            print("putting gradients back on cpu")
+            for grad in gradients:
+                cpu_grads.append(grad.cpu())
             if self.IS_LOCAL_MASTER:
-                cpu_grads = []
-                print("putting gradients back on cpu")
-                for grad in gradients:
-                    cpu_grads.append(grad.cpu())
                 reduced_grads = []
                 for grad in cpu_grads:
                     dist.all_reduce(grad, op=dist.ReduceOp.SUM)
