@@ -368,6 +368,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             cpu_grads = []
             print("putting gradients back on cpu")
             for grad in gradients:
+                print(f"grad")
                 cpu_grads.append(grad.cpu())
             if self.IS_LOCAL_MASTER:
                 reduced_grads = []
