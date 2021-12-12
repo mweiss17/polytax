@@ -26,6 +26,7 @@ import sys
 import signal
 import wandb
 import asyncio
+import traceback
 import numpy as np
 import time
 import argparse
@@ -419,8 +420,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             else:
                 self._log_train(x, x_hat)
 
-        # if self.checkpoint_now:
-        #     self.checkpoint()
+        if self.checkpoint_now:
+            self.checkpoint()
 
     def evaluate(self, one_sample=True):
         self.model.eval()
@@ -493,9 +494,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
                 trainer.set('distributed/kwargs/rank', i)
                 job = TPUJob(trainer, train_state, tpus[i])
-                future = job.submit()
+                try:
+                    future = job.submit()
+                except Exception as e:
+                    print("consuming exception")
                 self.jobs.append((future, job))
-
 
             state = "running"
             while state == "running":

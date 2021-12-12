@@ -7,7 +7,7 @@ eval_every: 10
 distributed:
   kwargs:
     backend: "GLOO" # use NCCL for GPU
-    rank: -1
+    rank: 0
     world_size: 1
 
 # Dataset and Batch Size
@@ -87,7 +87,7 @@ tpu:
     netrange: "192.170.0.0/29"
     acc_type: "v3-8"
     preemptible: False
-    bucket: "must-results-eu"
+    bucket: "must-results-europe"
     project: "polytax"
 job:
   kwargs:
