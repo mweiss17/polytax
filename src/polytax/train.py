@@ -126,6 +126,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.experiment_directory = self._experiment_directory
         os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
+
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
         if self.IS_GLOBAL_MASTER:
             if self.get("use_wandb"):
@@ -154,7 +155,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.train_loader = get_dataset(task=self.train_task, seed=self.get("seed"), GLOBAL_RANK=self.GLOBAL_RANK, NUM_SHARDS=self.NUM_SHARDS, device=self.device, **self.get("dataset/kwargs"),)
 
     def _build_eval_tasks(self, train_state: "TrainState"):
-        self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
+        kwargs = self.get("dataset/kwargs")
+        kwargs["split"] = "validation"
+        self.eval_tasks = get_eval_tasks(**kwargs)
 
         self.eval_datasets = get_eval_datasets(
             tasks=self.eval_tasks,
@@ -162,7 +165,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             GLOBAL_RANK=self.GLOBAL_RANK,
             NUM_SHARDS=self.NUM_SHARDS,
             device=self.device,
-            **self.get("dataset/kwargs"),
+            **kwargs,
         )
 
     def _build_model(self, train_state: "TrainState"):
