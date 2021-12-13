@@ -16,7 +16,7 @@ dataset:
     split: "train"
     input_seq_len: 512
     target_seq_len: 128
-    batch_size: 8 # per device
+    batch_size: 16 # per device
     use_iterable_ds: True
 
 #dataset:
@@ -54,9 +54,9 @@ use_wandb: True
 
 # Model Config
 model_config:
-  d_ff: 384
+  d_ff: 3072
   d_kv: 64
-  d_model: 96
+  d_model: 768
   decoder_start_token_id: 0
   dropout_rate: 0.1
   eos_token_id: 1

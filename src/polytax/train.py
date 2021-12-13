@@ -378,7 +378,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 grads = [grad.to(self.device) for grad in reduced_grads]
             else:
                 grads = [grad.zero_() for grad in gradients]
-        print("reduced.")
+        # print("reduced.")
         if xla_found:
             loss = xm.optimizer_step(self.optim, barrier=True)
         else:
@@ -408,8 +408,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = self.loss(x_hat.logits, x["labels"])
         loss.backward()
 
-        xm.add_step_closure(self.step_gradients, args=())
-
+        # xm.add_step_closure(self.step_gradients, args=())
+        self.step_gradients()
 
         if self.log_scalars_now and self.IS_GLOBAL_MASTER:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
