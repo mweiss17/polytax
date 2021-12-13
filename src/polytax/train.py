@@ -336,6 +336,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 predictions.append(task.postprocess_fn(preds, example=ex))
                 text_preds.append(self.tokenizer.decode([preds]))
                 text_target = self.tokenizer.decode(ex['labels'][i].tolist())
+
                 if task.name == "glue_qqp_v002" and text_target == "not":
                     text_target = "not_duplicate"
                 if task.name == "glue_mrpc_v002" and text_target == "not":
@@ -350,7 +351,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         metric_result[list(metric_result.keys())[0]] = 0.
                 except Exception as e:
                     print(f"Metric failed with error: {e}")
-                    breakpoint()
                     metric_result = 0.0
                 for metric_name, metric_value in metric_result.items():
                     tag = "eval/{}/{}".format(task.name, metric_name)
@@ -439,6 +439,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             examples = defaultdict(list)
             preds = defaultdict(list)
             for task_name, loader in self.eval_datasets.items():
+
+
                 for x in loader:
                     examples[task_name].append(x.copy())
                     try:
