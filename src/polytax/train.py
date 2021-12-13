@@ -408,12 +408,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = self.loss(x_hat.logits, x["labels"])
         loss.backward()
 
-        self.step_gradients()
+        xm.add_step_closure(self.step_gradients, args=())
 
-        self.next_step()
-        if xla_found:
-            xm.mark_step()
-        self.tracker.add(1)
 
         if self.log_scalars_now and self.IS_GLOBAL_MASTER:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
@@ -427,6 +423,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if self.checkpoint_now:
             self.checkpoint()
+
+        self.next_step()
+        if xla_found:
+            xm.mark_step()
+        self.tracker.add(1)
+
 
     def evaluate(self, one_sample=True):
         self.model.eval()
