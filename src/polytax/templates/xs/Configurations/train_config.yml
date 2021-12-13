@@ -93,7 +93,7 @@ model_config:
   layer_norm_epsilon: 1e-6
   model_type: "t5-xs"
   num_decoder_layers: 1
-  num_heads: 12
+  num_heads: 2
   num_layers: 1
   pad_token_id: 0
   relative_attention_num_buckets: 32
