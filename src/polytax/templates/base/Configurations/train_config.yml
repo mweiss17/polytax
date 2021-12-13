@@ -45,7 +45,7 @@ training:
 
 # Steps
 wandb:
-  log_scalars_every: 1
+  log_scalars_every: 100
 
 num_train_steps: 1000000
 

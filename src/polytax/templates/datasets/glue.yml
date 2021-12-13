@@ -1,7 +1,7 @@
 dataset:
   kwargs:
     name: "glue_v002_proportional"
-    split: "validation"
+    split: "train"
     input_seq_len: 128
     target_seq_len: 2
     batch_size: 4

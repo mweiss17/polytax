@@ -54,35 +54,10 @@ num_train_steps: 1000000
 use_wandb: True
 
 ## Model Config
-#model_config:
-#  d_ff: 32
-#  d_kv: 16
-#  d_model: 32
-#  decoder_start_token_id: 0
-#  dropout_rate: 0.1
-#  eos_token_id: 1
-#  feed_forward_proj: "relu"
-#  gradient_checkpointing: "False"
-#  initializer_factor: 1.0
-#  is_encoder_decoder: "True"
-#  layer_norm_epsilon: 1e-6
-#  model_type: "t5-xs"
-#  num_decoder_layers: 1
-#  num_heads: 2
-#  num_layers: 1
-#  pad_token_id: 0
-#  relative_attention_num_buckets: 4
-#  transformers_version: "4.10.0.dev0"
-#  use_cache: false
-#  cache_dir: "/tmp/"
-#  vocab_size: 32003
-
-
-# Model Config
 model_config:
-  d_ff: 384
-  d_kv: 64
-  d_model: 96
+  d_ff: 32
+  d_kv: 16
+  d_model: 32
   decoder_start_token_id: 0
   dropout_rate: 0.1
   eos_token_id: 1
@@ -96,7 +71,7 @@ model_config:
   num_heads: 2
   num_layers: 1
   pad_token_id: 0
-  relative_attention_num_buckets: 32
+  relative_attention_num_buckets: 4
   transformers_version: "4.10.0.dev0"
   use_cache: false
   cache_dir: "/tmp/"
