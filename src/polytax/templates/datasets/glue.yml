@@ -4,5 +4,5 @@ dataset:
     split: "train" # validation
     input_seq_len: 128
     target_seq_len: 2
-    batch_size: 4
+    batch_size: 16
     use_iterable_ds: False

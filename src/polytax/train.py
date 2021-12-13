@@ -330,6 +330,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             text_preds = []
             targets = []
             text_targets = []
+            # breakpoint()
+            #.cpu().tolist()
             ex = examples[task.name][0]
             task_preds = all_preds[task.name][0]
             for i, preds in enumerate(task_preds):
@@ -433,13 +435,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.tracker.add(1)
 
 
-    def evaluate(self, one_sample=True):
+    def evaluate(self):
         self.model.eval()
         with torch.no_grad():
             examples = defaultdict(list)
             preds = defaultdict(list)
+            i=0
             for task_name, loader in self.eval_datasets.items():
-
 
                 for x in loader:
                     examples[task_name].append(x.copy())
@@ -448,12 +450,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     except Exception:
                         print("no labels found")
                     outputs = self.model(**x)
-                    out = outputs.logits.argmax(2).cpu()
-                    out = out[:, 1].tolist()
+                    out = outputs.logits.argmax(2)
+                    out = out[:, 1]
                     preds[task_name].append(out)
-
-                    if one_sample:
+                    #
+                    # if one_sample:
+                    #     break
+                    if i==2:
                         break
+                    i+=1
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(

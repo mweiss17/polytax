@@ -6,7 +6,7 @@ from typing import Iterator, Dict
 import torch
 import tensorflow as tf
 from tensorflow.python.data.ops.dataset_ops import ParallelMapDataset
-
+from torch.utils.data import SequentialSampler, BatchSampler
 try:
     import torch_xla.distributed.parallel_loader as pl
 except ImportError:
@@ -29,6 +29,7 @@ def get_dataset(
     GLOBAL_RANK,
     NUM_SHARDS,
     device,
+    use_iterable_ds: bool = False,
     **kwargs,
 ) -> Iterator:
     """Returns a dataset for pretraining."""
@@ -39,7 +40,7 @@ def get_dataset(
         "targets": target_seq_len,
     }
     dataset = build_seqio_dataset(task, seq_len, split, seed=seed)
-    dataset = build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
+    dataset = build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=use_iterable_ds)
     return dataset
 
 
@@ -72,21 +73,21 @@ def build_seqio_dataset(task, sequence_length, split, seed=1):
     return dataset
 
 
-def build_iterable_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device) -> Iterator:
+def build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=True) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
-    dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-    dataset = IterableDataset(dataset)
-    dataset = itertools.cycle(dataset)
+    if use_iterable_ds:
+        dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        dataset = IterableDataset(dataset)
+        dataset = itertools.cycle(dataset)
+    else:
+        dataset = dataset.prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        dataset = MapDataset(dataset)
+        dataset = BatchSampler(SequentialSampler(dataset), batch_size, drop_last=False)
+
     if pl:
         dataset = iter(pl.MpDeviceLoader(dataset, device))
     return dataset
-
-
-def build_map_ds(ds: ParallelMapDataset):
-    ds = ds.as_numpy_iterator()
-    ds = MapDataset(ds)
-    return ds
 
 
 def get_eval_datasets(
@@ -114,10 +115,7 @@ def get_eval_datasets(
 
     for task in tasks:
         ds = build_seqio_dataset(task, seq_len, split, seed=seed)
-        if use_iterable_ds:
-            ds = build_iterable_dataset(ds, batch_size, GLOBAL_RANK, NUM_SHARDS, device)
-        else:
-            ds = build_map_ds(ds)
+        ds = build_dataset(ds, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=use_iterable_ds)
         datasets[task.name] = ds
     return datasets
 
