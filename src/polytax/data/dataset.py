@@ -45,20 +45,20 @@ class MapDataset(torch.utils.data.Dataset):
             attention_mask = torch.where(attention_mask >= 1, 1, attention_mask)
         else:
             attention_mask = torch.tensor(
-                [self.data[idx]["encoder_segment_ids"]], dtype=torch.long
+                self.data[idx]["encoder_segment_ids"], dtype=torch.long
             )
 
         labels = torch.tensor(self.data[idx]["decoder_target_tokens"], dtype=torch.long)
         labels = torch.where(labels >= 32000, -100, labels).unsqueeze(0)
         sample = {
             "input_ids": torch.tensor(
-                [self.data[idx]["encoder_input_tokens"]], dtype=torch.long
+                self.data[idx]["encoder_input_tokens"], dtype=torch.long
             ),
             "decoder_input_ids": torch.tensor(
-                [self.data[idx]["decoder_input_tokens"]], dtype=torch.long
+                self.data[idx]["decoder_input_tokens"], dtype=torch.long
             ),
             "decoder_attention_mask": torch.tensor(
-                [self.data[idx]["decoder_loss_weights"]], dtype=torch.long
+                self.data[idx]["decoder_loss_weights"], dtype=torch.long
             ),
             "labels": labels,
             "attention_mask": attention_mask

@@ -390,6 +390,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def run(self, train_state):
         self._build(train_state)
         if self.get("run_training"):
+            print("Training...")
             while True:
                 for i, x in enumerate(self.train_loader):
                     self.train(x)
@@ -410,7 +411,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss.backward()
 
         self.step_gradients()
-        if self.get("use_wandb") and self.log_scalars_now and self.IS_GLOBAL_MASTER:
+        if self.log_scalars_now and self.IS_GLOBAL_MASTER:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(
