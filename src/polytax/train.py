@@ -180,8 +180,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
 
         if "switch" in self.get("model_config/model_type"):
-            # WIP: Make these names match in the Switch Transformer config, we need to make sure all the variables match.
-            # Right now (10/12) I don't think it's consistent yet, will update my fork asap
             model_config = self.get("model_config").copy()
             model_config["local_world_size"] = self.LOCAL_WORLD_SIZE
             model_config["global_world_size"] = self.GLOBAL_WORLD_SIZE
@@ -273,7 +271,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         extra_id = 32099
         ids_to_replace_in_preds = []
 
-        # Just curious if it'll be slow since we might iterate the whole thing to get to -100
         for idx, label in enumerate(labels_list):
             if label == -100:
                 ids_to_replace_in_preds.append(idx)
@@ -479,7 +476,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         super(Nanny, self).__init__()
         self.auto_setup()
         self.jobs = []
-        # Do we need original_sigint?
         original_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self.exit_gracefully)
 
