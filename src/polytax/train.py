@@ -26,7 +26,6 @@ import sys
 import signal
 import wandb
 import asyncio
-import traceback
 import seqio
 import numpy as np
 import t5
@@ -331,7 +330,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             targets = []
             text_targets = []
             text_preds = []
-            for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
+
+            for _, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
                 preds = preds.cpu().tolist()
                 for j, pred in enumerate(preds):
                     target = examples['labels'][j].tolist()
