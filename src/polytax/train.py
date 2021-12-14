@@ -164,11 +164,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_eval_tasks(self):
         mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
         tasks = t5.data.get_subtasks(mixture)
-        self.eval_tasks = seqio.evaluation.get_valid_eval_tasks(tasks, "validation")
+        self.eval_tasks = seqio.evaluation.get_valid_eval_tasks(tasks, self.get("val_split_name"))
         self.eval_datasets = {}
         for task in self.eval_tasks:
-            ds = build_seqio_dataset(task, self.seq_len, "validation", seed=self.get("seed"), pack=False)
-            ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.device, self.get("use_iterable_ds"))
+            ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
+            ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.device, False)
             self.eval_datasets[task.name] = ds
 
     def _build_model(self, train_state: "TrainState"):
@@ -348,7 +348,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 for metric_name, metric_value in metric_result.items():
                     tag = "eval/{}/{}".format(task.name, metric_name)
                     metric_results[tag] = metric_value
-        print(f"text_targets: {text_targets[-1]}, text_preds: {text_preds[-1]}, pred: {pred}, target: {target}")
+            metric_results[f"eval/{task.name}/text_preds"] = text_preds[:10]
+            metric_results[f"eval/{task.name}/text_targets"] = text_targets[:10]
+
         results["eval_accuracy"] = metric_results
         if self.get("use_wandb"):
             self.wandb_log(**results)

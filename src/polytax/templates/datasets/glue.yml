@@ -1,6 +1,7 @@
-dataset_name: "glue_stsb_v002" #"glue_v002_proportional" # "glue_stsb_v002"
+dataset_name: "glue_v002_proportional" # "glue_stsb_v002"
 split: "train" # validation
 input_seq_len: 128
 target_seq_len: 20
 batch_size: 16
 use_iterable_ds: False
+val_split_name: "validation"

@@ -8,14 +8,19 @@ class IterableDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         def process_sample(sample):
+            if sample.get("encoder_segment_ids") is None:
+                attention_mask = torch.tensor(sample["encoder_input_tokens"], dtype=torch.long)
+                attention_mask = torch.where(attention_mask >= 1, 1, attention_mask)
+            else:
+                attention_mask = torch.tensor(
+                    [sample["encoder_segment_ids"]], dtype=torch.long
+                ).squeeze()
             labels = torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)
             sample = {
                 "input_ids": torch.tensor(
                     sample["encoder_input_tokens"], dtype=torch.long
                 ),
-                "attention_mask": torch.tensor(
-                    sample["encoder_segment_ids"], dtype=torch.long
-                ),
+                "attention_mask": attention_mask,
                 "decoder_input_ids": torch.tensor(
                     sample["decoder_input_tokens"], dtype=torch.long
                 ),
