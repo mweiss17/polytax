@@ -26,7 +26,6 @@ import sys
 import signal
 import wandb
 import asyncio
-import traceback
 import seqio
 import numpy as np
 import t5
@@ -181,11 +180,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if "switch" in self.get("model_config/model_type"):
             model_config = self.get("model_config").copy()
-            model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
-            model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
-            model_config["LOCAL_RANK"] = self.LOCAL_RANK
-            model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
-            model_config["NUM_SHARDS"] = self.NUM_SHARDS
+            model_config["local_world_size"] = self.LOCAL_WORLD_SIZE
+            model_config["global_world_size"] = self.GLOBAL_WORLD_SIZE
+            model_config["local_rank"] = self.LOCAL_RANK
+            model_config["global_rank"] = self.GLOBAL_RANK
+            model_config["num_shards"] = self.NUM_SHARDS
             model_config["xla_found"] = xla_found
             model_config = SwitchConfig.from_dict(model_config)
 
@@ -212,9 +211,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     @property
     def losses_state_dict(self):
-        return {}
-        # TODO re-add
-        # return {"loss": self.loss.state_dict()}
+        if self.loss is not None:
+            return {"loss": self.loss.state_dict()}
 
     @property
     def optims_state_dict(self):
@@ -271,6 +269,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Prepare to decode the labels
         extra_id = 32099
         ids_to_replace_in_preds = []
+
         for idx, label in enumerate(labels_list):
             if label == -100:
                 ids_to_replace_in_preds.append(idx)
@@ -278,7 +277,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 extra_id -= 1
 
         extra_id = 32099
-        for idx, pred in enumerate(preds_list):
+        for idx, _ in enumerate(preds_list):
             if idx in ids_to_replace_in_preds:
                 preds_list[idx] = extra_id
                 extra_id -= 1
@@ -328,10 +327,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         for task in self.eval_tasks:
             # Extract the portion of decodes corresponding to this dataset
             predictions = []
-            text_preds = []
             targets = []
             text_targets = []
-            for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
+            text_preds = []
+
+            for _, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
                 preds = preds.cpu().tolist()
                 for j, pred in enumerate(preds):
                     target = examples['labels'][j].tolist()
@@ -545,7 +545,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
 
     def exit_gracefully(self, signum, frame):
         print("Exiting gracefully")
-        for future, job in self.jobs:
+        for _, job in self.jobs:
             job.clean_up()
         sys.exit(0)
 
