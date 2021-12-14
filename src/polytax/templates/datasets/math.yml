@@ -1,8 +1,6 @@
-dataset:
-  kwargs:
-    name: "math_dataset"
-    split: "train"
-    input_seq_len: 160
-    target_seq_len: 30
-    batch_size: 128
-    use_iterable_ds: True
+dataset_name: "math_dataset"
+split: "train"
+input_seq_len: 160
+target_seq_len: 30
+batch_size: 128
+use_iterable_ds: True

@@ -5,6 +5,7 @@ import itertools
 from typing import Iterator, Dict
 import torch
 import tensorflow as tf
+from torch.utils.data import DataLoader
 from tensorflow.python.data.ops.dataset_ops import ParallelMapDataset
 from torch.utils.data import SequentialSampler, BatchSampler
 try:
@@ -19,48 +20,7 @@ from polytax.data.dataset import IterableDataset, MapDataset
 """ BUILD TASKS AND DATASETS """
 
 
-def get_dataset(
-    task: seqio.Task,
-    seed: int,
-    batch_size: int,
-    input_seq_len: int,
-    target_seq_len: int,
-    split: str,
-    GLOBAL_RANK,
-    NUM_SHARDS,
-    device,
-    use_iterable_ds: bool = False,
-    **kwargs,
-) -> Iterator:
-    """Returns a dataset for pretraining."""
-
-    # determine maximum sequence length to use
-    seq_len = {
-        "inputs": input_seq_len,
-        "targets": target_seq_len,
-    }
-    dataset = build_seqio_dataset(task, seq_len, split, seed=seed)
-    dataset = build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=use_iterable_ds)
-    return dataset
-
-
-def get_task(name: str, split: str, **kwargs) -> seqio.Task:
-    """Returns a single task."""
-    task = t5.data.get_mixture_or_task(name)
-    return task
-
-
-def get_eval_tasks(name: str, split: str, **kwargs) -> Iterator:
-    """Returns the validation tasks."""
-
-    mixture = t5.data.get_mixture_or_task(name)
-    tasks = t5.data.get_subtasks(mixture)
-    if split != "train":
-        tasks = seqio.evaluation.get_valid_eval_tasks(tasks, split)
-    return tasks
-
-
-def build_seqio_dataset(task, sequence_length, split, seed=1):
+def build_seqio_dataset(task, sequence_length, split, seed=1, pack=False):
     dataset = seqio.get_dataset(
         task.name,
         task_feature_lengths=sequence_length,
@@ -68,54 +28,24 @@ def build_seqio_dataset(task, sequence_length, split, seed=1):
         use_cached=False,
         shuffle=True,
         seed=seed,
-        feature_converter=seqio.EncDecFeatureConverter(pack=True),
+        feature_converter=seqio.EncDecFeatureConverter(pack=pack),
     )
     return dataset
-
 
 def build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=True) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
+    print("building dataset.")
     if use_iterable_ds:
         dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
         dataset = IterableDataset(dataset)
-        dataset = itertools.cycle(dataset)
+        loader = itertools.cycle(dataset)
     else:
-        dataset = dataset.prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        dataset = MapDataset(dataset)
-        dataset = BatchSampler(SequentialSampler(dataset), batch_size, drop_last=False)
+        ds = dataset.prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        ds = MapDataset(ds)
+        loader = DataLoader(ds, batch_size=batch_size, pin_memory=True, num_workers=0, drop_last=True,  collate_fn=ds.collate_fn)
 
     if pl:
-        dataset = iter(pl.MpDeviceLoader(dataset, device))
-    return dataset
-
-
-def get_eval_datasets(
-    tasks: Dict[str, seqio.Task],
-    batch_size: int,
-    seed: int,
-    input_seq_len: int,
-    target_seq_len: int,
-    split: str,
-    GLOBAL_RANK,
-    NUM_SHARDS,
-    device,
-    use_iterable_ds: bool = False,
-    **kwargs,
-) -> Dict[str, Iterator]:
-    """Returns a dataset for validation."""
-
-    # determine maximum sequence length to use
-    seq_len = {
-        "inputs": input_seq_len,
-        "targets": target_seq_len,
-    }
-
-    datasets = {}
-
-    for task in tasks:
-        ds = build_seqio_dataset(task, seq_len, split, seed=seed)
-        ds = build_dataset(ds, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=use_iterable_ds)
-        datasets[task.name] = ds
-    return datasets
+        loader = iter(pl.MpDeviceLoader(loader, device))
+    return loader
 
