@@ -26,7 +26,10 @@ import sys
 import signal
 import wandb
 import asyncio
+import traceback
+import seqio
 import numpy as np
+import t5
 import time
 import argparse
 from copy import deepcopy
@@ -69,10 +72,7 @@ except Exception as e:
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
 from polytax.data.utils import (
-    get_eval_tasks,
-    get_task,
-    get_dataset,
-    get_eval_datasets,
+    build_dataset, build_seqio_dataset
 )
 from wormulon.train_state import TrainState
 
@@ -112,7 +112,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         print(f"{self._config}")
         self._build_dist()
         self._build_general(train_state)
-        self._build_tasks(train_state)
+        self._build_tasks()
         self._build_model(train_state)
         self._build_optimizer(train_state)
 
@@ -125,6 +125,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.experiment_directory = self._experiment_directory
         os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
         self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
+
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
         if self.IS_GLOBAL_MASTER:
             if self.get("use_wandb"):
@@ -135,36 +136,40 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             dist.init_process_group(**self.get("distributed/kwargs"))
             print("distributed initialized")
 
-    def _build_tasks(self, train_state: "TrainState"):
+    def _build_tasks(self):
 
         if xla_found and not self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
 
         if self.get("run_training"):
-            self._build_train_tasks(train_state)
+            self._build_train_tasks()
         if self.get("run_evaluation"):
-            self._build_eval_tasks(train_state)
+            self._build_eval_tasks()
 
         if xla_found and self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
+    @property
+    def seq_len(self):
+        seq_len = {
+            "inputs": self.get("input_seq_len"),
+            "targets": self.get("target_seq_len"),
+        }
+        return seq_len
 
-    # Is it needed to have train_state as an argument?
-    def _build_train_tasks(self, train_state: "TrainState"):
-        self.train_task = get_task(**self.get("dataset/kwargs"))
-        self.train_loader = get_dataset(task=self.train_task, seed=self.get("seed"), GLOBAL_RANK=self.GLOBAL_RANK, NUM_SHARDS=self.NUM_SHARDS, device=self.device, **self.get("dataset/kwargs"),)
+    def _build_train_tasks(self):
+        mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
+        dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
+        self.train_loader = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.device, self.get("use_iterable_ds"))
 
-    # Same question as _build_train_tasks
-    def _build_eval_tasks(self, train_state: "TrainState"):
-        self.eval_tasks = get_eval_tasks(**self.get("dataset/kwargs"))
-
-        self.eval_datasets = get_eval_datasets(
-            tasks=self.eval_tasks,
-            seed=self.get("seed"),
-            GLOBAL_RANK=self.GLOBAL_RANK,
-            NUM_SHARDS=self.NUM_SHARDS,
-            device=self.device,
-            **self.get("dataset/kwargs"),
-        )
+    def _build_eval_tasks(self):
+        mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
+        tasks = t5.data.get_subtasks(mixture)
+        self.eval_tasks = seqio.evaluation.get_valid_eval_tasks(tasks, self.get("val_split_name"))
+        self.eval_datasets = {}
+        for task in self.eval_tasks:
+            ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
+            ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.device, False)
+            self.eval_datasets[task.name] = ds
 
     def _build_model(self, train_state: "TrainState"):
         self.tokenizer = get_default_vocabulary()
@@ -201,7 +206,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     @property
     def total_batch_size(self):
-        return self.get("dataset/kwargs/batch_size") * self.LOCAL_WORLD_SIZE * self.GLOBAL_WORLD_SIZE
+        return self.get("batch_size") * self.LOCAL_WORLD_SIZE * self.GLOBAL_WORLD_SIZE
 
     @property
     def checkpoint_now(self):
@@ -245,7 +250,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         buffer = self.train_state.serialize()
         if xla_found and self.IS_GLOBAL_MASTER:
             # only push to storage if you are the master ordinal
-            path = f"{self.experiment_directory}/trainstate/{self.get('dataset/kwargs/name')}-{self.step}.pt"
+            path = f"{self.experiment_directory}/trainstate/{self.get('dataset_name')}-{self.step}.pt"
             self.bucket.upload(path, buffer, overwrite=True)
         elif not xla_found:
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
@@ -292,10 +297,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Print to console
         print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
 
-        # Return if we don't have wandb
-        if not self.get("use_wandb"):
-            return
-
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
         results = {
@@ -305,18 +306,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "label": label,
             "pred": pred,
             "train_loss": loss,
-            "num_tokens": self.get("dataset/kwargs/input_seq_len")
+            "num_tokens": self.get("input_seq_len")
             * self.total_batch_size
             * self.step,
             "instantaneous it/s": self.tracker.rate(),
             "global it/s": self.tracker.global_rate(),
         }
+        # Return if we don't have wandb
+        if self.get("use_wandb"):
+            self.wandb_log(**results)
+        else:
+            print(results)
 
-        self.wandb_log(**results)
         if xla_found:
             self.bucket.touch(self.experiment_directory + "/heartbeat")
 
-    def _log_eval(self, all_preds, examples):
+    def _log_eval(self, all_preds, all_examples):
         results = {
             "step": self.step,
             "instantaneous it/s": self.tracker.rate(),
@@ -327,32 +332,33 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             # Extract the portion of decodes corresponding to this dataset
             predictions = []
             targets = []
-            ex = examples[task.name][0]
-            task_preds = all_preds[task.name][0]
-            for i, preds in enumerate(task_preds):
-                predictions.append(task.postprocess_fn(preds, example=ex))
-                text_target = self.tokenizer.decode(ex['labels'][i].tolist())
-                # I'm wondering if there's any better way instead of hardcoding the tasks
-                if task.name == "glue_qqp_v002" and text_target == "not":
-                    text_target = "not_duplicate"
-                if task.name == "glue_mrpc_v002" and text_target == "not":
-                    text_target = "not_equivalent"
-                targets.append(task.postprocess_fn(text_target, example=ex['input_ids'][i], is_target=True))
+            text_targets = []
+            text_preds = []
+            for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
+                preds = preds.cpu().tolist()
+                for j, pred in enumerate(preds):
+                    target = examples['labels'][j].tolist()
+                    text_target = self.tokenizer.decode(target)
+                    text_pred = self.tokenizer.decode(pred)
+                    text_preds.append(text_pred)
+                    predictions.append(task.postprocess_fn(text_pred, example=examples['input_ids'][j]))
+                    targets.append(task.postprocess_fn(text_target, example=examples['input_ids'][j], is_target=True))
+                    text_targets.append(text_target)
             for metric_fn in task.metric_fns:
-                try:
-                    metric_result = metric_fn(targets, predictions)
-                    if np.isnan(list(metric_result.values())[0]):
-                        metric_result[list(metric_result.keys())[0]] = 0.
-                except Exception as e:
-                    print(f"Metric failed with error: {e}")
-                    breakpoint()
-                    metric_result = 0.0
+                metric_result = metric_fn(targets, predictions)
+                if np.isnan(list(metric_result.values())[0]):
+                    metric_result[list(metric_result.keys())[0]] = 0.
                 for metric_name, metric_value in metric_result.items():
                     tag = "eval/{}/{}".format(task.name, metric_name)
                     metric_results[tag] = metric_value
-        results["mean_accuracy"] = np.mean(list(metric_results.values()))
+            metric_results[f"eval/{task.name}/text_preds"] = text_preds[:10]
+            metric_results[f"eval/{task.name}/text_targets"] = text_targets[:10]
+
         results["eval_accuracy"] = metric_results
-        self.wandb_log(**results)
+        if self.get("use_wandb"):
+            self.wandb_log(**results)
+        else:
+            print(results, flush=True)
 
     def loss(self, logits, labels):
         loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
@@ -360,54 +366,54 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return loss
 
     def step_gradients(self):
-        if xla_found:
+        if xla_found and self.IS_MULTI_HOST:
             gradients = xm._fetch_gradients(self.optim)
             xm.all_reduce('sum', gradients, scale=1.0 / self.LOCAL_WORLD_SIZE)
+
             cpu_grads = []
             for grad in gradients:
                 cpu_grads.append(grad.cpu())
-            if self.IS_MULTI_HOST:
-                if self.IS_LOCAL_MASTER:
-                    reduced_grads = []
-                    for grad in cpu_grads:
-                        dist.all_reduce(grad, op=dist.ReduceOp.SUM)
-                        grad /= self.GLOBAL_WORLD_SIZE
-                        reduced_grads.append(grad)
-                    grads = [grad.to(self.device) for grad in reduced_grads]
-                else:
-                    grads = [grad.zero_() for grad in gradients]
-        loss = xm.optimizer_step(self.optim, barrier=True)
+            if self.IS_LOCAL_MASTER:
+                reduced_grads = []
+                for grad in cpu_grads:
+                    dist.all_reduce(grad, op=dist.ReduceOp.SUM)
+                    grad /= self.GLOBAL_WORLD_SIZE
+                    reduced_grads.append(grad)
+                grads = [grad.to(self.device) for grad in reduced_grads]
+            else:
+                grads = [grad.zero_() for grad in gradients]
+        if xla_found:
+            loss = xm.optimizer_step(self.optim, barrier=True)
+        else:
+            self.optim.step()
         self.optim.zero_grad()
-
 
 
     @register_default_dispatch
     def run(self, train_state):
         self._build(train_state)
         if self.get("run_training"):
-            for x in self.train_loader:
+            print("Training...")
+            while True:
+                for i, x in enumerate(self.train_loader):
+                    self.train(x)
+                    if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
+                        self.evaluate()
                 if self.get("num_train_steps") == self.step:
+                    print("Done Training")
                     break
-                self.train(x)
-                if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
-                    self.evaluate()
+
         if xla_found:
             self.finish()
         return train_state
 
     def train(self, x):
         self.model.train()
-
         x_hat = self.model(**x)
         loss = self.loss(x_hat.logits, x["labels"])
         loss.backward()
 
         self.step_gradients()
-
-        self.next_step()
-        xm.mark_step()
-        self.tracker.add(1)
-
         if self.log_scalars_now and self.IS_GLOBAL_MASTER:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
@@ -418,36 +424,43 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             else:
                 self._log_train(x, x_hat)
 
-        # if self.checkpoint_now:
-        #     self.checkpoint()
+        if self.checkpoint_now:
+            self.checkpoint()
 
-    def evaluate(self, one_sample=True):
+        self.next_step()
+        if xla_found:
+            xm.mark_step()
+        self.tracker.add(1)
+
+
+    def evaluate(self):
         self.model.eval()
         with torch.no_grad():
-            examples = defaultdict(list)
-            preds = defaultdict(list)
+            all_examples = {}
+            all_preds = {}
             for task_name, loader in self.eval_datasets.items():
-                for x in loader:
-                    examples[task_name].append(x.copy())
+                examples = []
+                preds = []
+                for i, x in enumerate(loader):
+                    examples.append(x.copy())
+
                     try:
                         del x["labels"]
                     except Exception:
                         print("no labels found")
                     outputs = self.model(**x)
-                    out = outputs.logits.argmax(2).cpu()
-                    out = out[:, 1].tolist()
-                    preds[task_name].append(out)
-
-                    if one_sample:
-                        break
+                    out = outputs.logits.argmax(2)
+                    preds.append(out)
+                all_examples[task_name] = examples
+                all_preds[task_name] = preds
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(
-                    self._log_eval, args=(preds, examples), run_async=True
+                    self._log_eval, args=(all_preds, all_examples), run_async=True
                 )
             # Otherwise just call the function to log directly
             else:
-                self._log_eval(preds, examples)
+                self._log_eval(all_preds, all_examples)
 
 
     def finish(self):
@@ -474,7 +487,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         wandb_run_id = ""
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
-            wandb_run_id = self.wandb_run_id
+            wandb_run_id = self.wandb_run.id
             wandb.finish()
         return wandb_run_id
 
@@ -493,9 +506,11 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
                 trainer.set('distributed/kwargs/rank', i)
                 job = TPUJob(trainer, train_state, tpus[i])
-                future = job.submit()
+                try:
+                    future = job.submit()
+                except Exception as e:
+                    print("consuming exception")
                 self.jobs.append((future, job))
-
 
             state = "running"
             while state == "running":

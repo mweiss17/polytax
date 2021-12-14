@@ -1,9 +1,6 @@
-dataset:
-  kwargs:
-    name: "c4.en" # "glue_cola_v002"
-    split: "train"
-    input_seq_len: 512
-    target_seq_len: 128
-    batch_size: 8
-    use_iterable_ds: True
-    num_epochs: 100
+dataset_name: "c4.en" # "glue_cola_v002"
+split: "train"
+input_seq_len: 512
+target_seq_len: 128
+batch_size: 8
+use_iterable_ds: True

@@ -7,18 +7,15 @@ eval_every: 10
 distributed:
   kwargs:
     backend: "GLOO" # use NCCL for GPU
-    rank: -1
+    rank: 0
     world_size: 1
 
-# Dataset and Batch Size
-dataset:
-  kwargs:
-    name: "tiny_shakespeare"
-    split: "train"
-    input_seq_len: 32
-    target_seq_len: 8
-    batch_size: 4 #per device
-    use_iterable_ds: True
+dataset_name: "tiny_shakespeare"
+split: "train"
+input_seq_len: 32
+target_seq_len: 8
+batch_size: 4 #per device
+use_iterable_ds: True
 
 #dataset:get xs working on tpu
 #  kwargs:
@@ -42,7 +39,7 @@ optim:
 
 # Steps
 training:
-  checkpoint_every: 100
+  checkpoint_every: 1000
 
 # Steps
 wandb:
@@ -53,7 +50,7 @@ num_train_steps: 1000000
 # Logging
 use_wandb: True
 
-# Model Config
+## Model Config
 model_config:
   d_ff: 32
   d_kv: 16
@@ -78,7 +75,6 @@ model_config:
   vocab_size: 32003
 
 
-
 tpu:
   kwargs:
     zone: "europe-west4-a"
@@ -87,12 +83,12 @@ tpu:
     netrange: "192.170.0.0/29"
     acc_type: "v3-8"
     preemptible: False
-    bucket: "must-results-eu"
+    bucket: "must-results-europe"
     project: "polytax"
 job:
   kwargs:
     env_stmts: ["export XRT_TPU_CONFIG='localservice;0;localhost:51011';", "export PATH=$PATH:/home/$USER/.local/bin;", "unset LD_PRELOAD;"]
     setup_cmds: ["cd ~/polytax/ && git pull origin master","pip install git+https://git@github.com/mweiss17/wormulon@main#egg=wormulon --upgrade", "cd ~/polytax/ && pip install -e .[xla]"]
-    install_cmd: "cd ~/; git clone https://github.com/mweiss17/polytax.git; pip install -e polytax[xla];"
+    install_cmd: "cd ~/; git clone https://github.com/mweiss17/polytax.git; pip uninstall -y wormulon; pip install -e polytax[xla];"
     train_cmd: "python3 ~/polytax/src/polytax/train.py"
     cleanup_cmd: "pkill -9 python3"

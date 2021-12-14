@@ -3,7 +3,7 @@ import functools
 import tensorflow_datasets as tfds
 from t5.data import preprocessors
 from t5.data.tasks import DEFAULT_OUTPUT_FEATURES
-from t5.data.mixtures import _glue_tasks_with_weight
+from t5.data.mixtures import _glue_tasks_with_weight, _super_glue_tasks_with_weight, _super_glue_tasks_with_weight_sentinel
 from t5.evaluation import metrics
 from t5.data.glue_utils import get_glue_metric
 from t5.data.glue_utils import get_glue_postprocess_fn
@@ -85,9 +85,6 @@ for b in tfds.text.glue.Glue.builder_configs.values():
 
 seqio.MixtureRegistry.remove("glue_v002_proportional")
 seqio.MixtureRegistry.add("glue_v002_proportional", _glue_tasks_with_weight)
-
-
-# =================================== SuperGLUE =====================================
 
 # =================================== Mathematics / Reasoning =====================================
 

@@ -6,5 +6,5 @@ tpu:
     netrange: "192.170.0.0/29"
     acc_type: "v3-8"
     preemptible: False
-    bucket: "must-results"
+    bucket: "must-results-europe"
     project: "polytax"
