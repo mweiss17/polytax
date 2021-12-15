@@ -113,6 +113,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.IS_LOCAL_MASTER = self.LOCAL_RANK == 0
         self.IS_GLOBAL_MASTER = self.GLOBAL_RANK == 0
         self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
+        print(f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_RANK {self.GLOBAL_RANK}, self.IS_LOCAL_MASTER {self.IS_LOCAL_MASTER}, self.IS_GLOBAL_MASTER {self.IS_GLOBAL_MASTER}")
 
     def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
