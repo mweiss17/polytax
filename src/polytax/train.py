@@ -182,7 +182,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         test_ds = ListOpsDataset(test_ds)
         self.test_loader = itertools.cycle(test_ds)
 
-
     def _build_train_tasks(self):
         mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
@@ -212,6 +211,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
             model_config["NUM_SHARDS"] = self.NUM_SHARDS
             model_config["xla_found"] = xla_found
+            model_config["seed"] = self.get("seed")
             model_config = SwitchConfig.from_dict(model_config)
 
             self.model = SwitchForConditionalGeneration(model_config)

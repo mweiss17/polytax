@@ -1,9 +1,9 @@
 
 # Model Config
 model_config:
-  d_ff: 32
-  d_kv: 16
-  d_model: 32
+  d_ff: 3072
+  d_kv: 64
+  d_model: 768
   decoder_start_token_id: 0
   dropout_rate: 0.1
   eos_token_id: 1
@@ -12,15 +12,13 @@ model_config:
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
-  model_type: "switch-xs"
-  num_decoder_layers: 1
-  num_heads: 2
-  num_layers: 1
+  model_type: "switch"
+  num_decoder_layers: 12
+  num_heads: 12
+  num_layers: 12
   pad_token_id: 0
-  relative_attention_num_buckets: 4
+  relative_attention_num_buckets: 32
   transformers_version: "4.10.0.dev0"
   use_cache: false
   cache_dir: "/tmp/"
   vocab_size: 32003
-  capacity_factor: 1.0
-  n_experts: 8
