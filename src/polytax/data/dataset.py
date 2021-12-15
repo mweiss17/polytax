@@ -33,6 +33,32 @@ class IterableDataset(torch.utils.data.IterableDataset):
 
         return map(process_sample, self.np_iterator,)
 
+class ListOpsDataset(torch.utils.data.IterableDataset):
+    # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset
+    def __init__(self, np_iterator):
+        self.np_iterator = np_iterator
+
+    def __iter__(self):
+        def process_sample(sample):
+            attention_mask = torch.tensor(sample["inputs"], dtype=torch.long)
+            attention_mask = torch.where(attention_mask >= 1, 1, attention_mask)
+
+            labels = torch.tensor(sample["targets"], dtype=torch.long)
+            sample = {
+                "input_ids": torch.tensor(
+                    sample["inputs"], dtype=torch.long
+                ),
+                "attention_mask": attention_mask,
+                # "decoder_input_ids": torch.tensor(
+                #     sample["decoder_input_tokens"], dtype=torch.long
+                # ),
+                # "decoder_attention_mask": attention_mask,
+                "labels": torch.where(labels >= 32000, -100, labels).unsqueeze(1),
+            }
+            return sample
+
+        return map(process_sample, self.np_iterator,)
+
 
 class MapDataset(torch.utils.data.Dataset):
     # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset

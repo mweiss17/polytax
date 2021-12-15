@@ -13,8 +13,7 @@ try:
 except ImportError:
     pl = None
 
-from polytax.data import dataset  # pylint: disable=unused-import
-from polytax.data import tasks  # pylint: disable=unused-import
+from polytax.data import dataset, listops, tasks  # pylint: disable=unused-import
 from polytax.data.dataset import IterableDataset, MapDataset
 
 """ BUILD TASKS AND DATASETS """

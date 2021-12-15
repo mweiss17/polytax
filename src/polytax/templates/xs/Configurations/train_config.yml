@@ -1,7 +1,6 @@
 run_training: True
 run_evaluation: False
 seed: 12345
-eval_every: 10
 
 # Multi-host
 distributed:
@@ -43,8 +42,8 @@ training:
 
 # Steps
 wandb:
-  log_scalars_every: 1
-
+  log_scalars_every: 100
+eval_every: 100
 num_train_steps: 1000000
 
 # Logging

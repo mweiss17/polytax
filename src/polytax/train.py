@@ -29,6 +29,8 @@ import asyncio
 import traceback
 import seqio
 import numpy as np
+import tensorflow as tf
+import itertools
 import t5
 import time
 import argparse
@@ -71,9 +73,9 @@ except Exception as e:
     xla_found = False
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
-from polytax.data.utils import (
-    build_dataset, build_seqio_dataset
-)
+from polytax.data.utils import build_dataset, build_seqio_dataset
+from polytax.data import listops
+from polytax.data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
 
 
@@ -141,13 +143,18 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if xla_found and not self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
 
-        if self.get("run_training"):
-            self._build_train_tasks()
-        if self.get("run_evaluation"):
-            self._build_eval_tasks()
+        if self.get("dataset_name") == "listops":
+            self._build_list_ops()
+        else:
+            if self.get("run_training"):
+                self.tokenizer = get_default_vocabulary()
+                self._build_train_tasks()
+            if self.get("run_evaluation"):
+                self._build_eval_tasks()
 
         if xla_found and self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
+
     @property
     def seq_len(self):
         seq_len = {
@@ -155,6 +162,26 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "targets": self.get("target_seq_len"),
         }
         return seq_len
+
+    def _build_list_ops(self):
+        train_ds, eval_ds, test_ds, encoder = listops.get_datasets(
+            n_devices=self.NUM_SHARDS,
+            task_name=self.get("dataset_name"),
+            data_dir="../../data/",
+            bucket=self.bucket,
+            batch_size=self.get("batch_size"),
+            max_length=self.get("input_seq_len"))
+        self.tokenizer = encoder
+        train_ds = train_ds.shard(num_shards=self.NUM_SHARDS, index=self.GLOBAL_RANK).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        train_ds = ListOpsDataset(train_ds)
+        self.train_loader = itertools.cycle(train_ds)
+        eval_ds = eval_ds.shard(num_shards=self.NUM_SHARDS, index=self.GLOBAL_RANK).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        eval_ds = ListOpsDataset(eval_ds)
+        self.eval_loader = itertools.cycle(eval_ds)
+        test_ds = test_ds.shard(num_shards=self.NUM_SHARDS, index=self.GLOBAL_RANK).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        test_ds = ListOpsDataset(test_ds)
+        self.test_loader = itertools.cycle(test_ds)
+
 
     def _build_train_tasks(self):
         mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
@@ -172,8 +199,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.eval_datasets[task.name] = ds
 
     def _build_model(self, train_state: "TrainState"):
-        self.tokenizer = get_default_vocabulary()
-
         self.get("model_config")["layer_norm_epsilon"] = float(
             self.get("model_config")["layer_norm_epsilon"]
         )
