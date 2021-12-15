@@ -1,5 +1,5 @@
 """Input pipeline for the listops dataset."""
-
+import os
 import numpy as np
 
 import tensorflow.compat.v1 as tf
@@ -52,14 +52,21 @@ def get_datasets(n_devices,
   train_path = data_dir + task_name + '_train.tsv'
   val_path = data_dir + task_name + '_val.tsv'
   test_path = data_dir + task_name + '_test.tsv'
-  if bucket is not None:
-    train_path = bucket.download(train_path)
-    val_path = bucket.download(val_path)
-    test_path = bucket.download(test_path)
-  else:
-    train_dataset = preprocess_dataset(train_path, batch_size)
-    val_dataset = preprocess_dataset(val_path, batch_size)
-    test_dataset = preprocess_dataset(test_path, batch_size)
+  if not os.path.exists(train_path) or not os.path.exists(val_path) or not os.path.exists(test_path):
+    print("retrieving listops dataset from google cloud storage")
+    train_buf = bucket.download("data/listops_train.tsv")
+    val_buf = bucket.download("data/listops_val.tsv")
+    test_buf = bucket.download("data/listops_test.tsv")
+    with open("../../data/listops_train.tsv", "wb") as f:
+      f.write(train_buf.getvalue())
+    with open("../../data/listops_val.tsv", "wb") as f:
+      f.write(val_buf.getvalue())
+    with open("../../data/listops_test.tsv", "wb") as f:
+      f.write(test_buf.getvalue())
+
+  train_dataset = preprocess_dataset(train_path, batch_size)
+  val_dataset = preprocess_dataset(val_path, batch_size)
+  test_dataset = preprocess_dataset(test_path, batch_size)
 
   tf.logging.info('Finished preprocessing')
   tf.logging.info('Building vocab')
