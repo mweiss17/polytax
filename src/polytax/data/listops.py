@@ -57,11 +57,11 @@ def get_datasets(n_devices,
     train_buf = bucket.download("data/listops_train.tsv")
     val_buf = bucket.download("data/listops_val.tsv")
     test_buf = bucket.download("data/listops_test.tsv")
-    with open("../../data/listops_train.tsv", "wb") as f:
+    with open(f"{os.getcwd()}/../../data/listops_train.tsv", "wb") as f:
       f.write(train_buf.getvalue())
-    with open("../../data/listops_val.tsv", "wb") as f:
+    with open(f"{os.getcwd()}/../../data/listops_val.tsv", "wb") as f:
       f.write(val_buf.getvalue())
-    with open("../../data/listops_test.tsv", "wb") as f:
+    with open(f"{os.getcwd()}/../../data/listops_test.tsv", "wb") as f:
       f.write(test_buf.getvalue())
 
   train_dataset = preprocess_dataset(train_path, batch_size)
