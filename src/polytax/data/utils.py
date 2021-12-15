@@ -8,10 +8,6 @@ import tensorflow as tf
 from torch.utils.data import DataLoader
 from tensorflow.python.data.ops.dataset_ops import ParallelMapDataset
 from torch.utils.data import SequentialSampler, BatchSampler
-try:
-    import torch_xla.distributed.parallel_loader as pl
-except ImportError:
-    pl = None
 
 from polytax.data import dataset, listops, tasks  # pylint: disable=unused-import
 from polytax.data.dataset import IterableDataset, MapDataset
@@ -31,20 +27,15 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, pack=False):
     )
     return dataset
 
-def build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, device, use_iterable_ds=True) -> Iterator:
+def build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, use_iterable_ds=True) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     print("building dataset.")
     if use_iterable_ds:
-        dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        dataset = IterableDataset(dataset)
-        loader = itertools.cycle(dataset)
+        tf_dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        dataset = IterableDataset(tf_dataset.as_numpy_iterator())
     else:
-        ds = dataset.prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        ds = MapDataset(ds)
-        loader = DataLoader(ds, batch_size=batch_size, pin_memory=True, num_workers=0, drop_last=True,  collate_fn=ds.collate_fn)
-
-    if pl:
-        loader = iter(pl.MpDeviceLoader(loader, device))
-    return loader
+        dataset = dataset.prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
+        dataset = MapDataset(dataset)
+    return tf_dataset, dataset
 

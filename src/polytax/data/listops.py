@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow.compat.v1 as tf
 import tensorflow_datasets as tfds
 import tensorflow_text as text
+from wormulon.tpu.bucket import Bucket
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 
@@ -38,35 +39,23 @@ def preprocess_dataset(file_path, batch_size):
   return ds
 
 
-def get_datasets(n_devices,
-                 task_name,
-                 data_dir=None,
-                 bucket=None,
-                 batch_size=256,
-                 max_length=2000):
+def get_listops(split='train', shuffle_files=False, seed=None):
   """Get algorithmic datasets."""
-  if batch_size % n_devices:
-    raise ValueError("Batch size %d isn't divided evenly by n_devices %d" %
-                     (batch_size, n_devices))
+  max_length = 128
+  batch_size = 256
+  bucket = Bucket("must-results")
 
-  train_path = data_dir + task_name + '_train.tsv'
-  val_path = data_dir + task_name + '_val.tsv'
-  test_path = data_dir + task_name + '_test.tsv'
-  if not os.path.exists(train_path) or not os.path.exists(val_path) or not os.path.exists(test_path):
+  local_dataset_path = f"{os.getcwd()}/../../data/listops_{split}.tsv"
+  os.makedirs(os.path.dirname(local_dataset_path), exist_ok=True)
+
+  if not os.path.exists(local_dataset_path):
     print("retrieving listops dataset from google cloud storage")
-    train_buf = bucket.download("data/listops_train.tsv")
-    val_buf = bucket.download("data/listops_val.tsv")
-    test_buf = bucket.download("data/listops_test.tsv")
-    with open(f"{os.getcwd()}/../../data/listops_train.tsv", "wb") as f:
-      f.write(train_buf.getvalue())
-    with open(f"{os.getcwd()}/../../data/listops_val.tsv", "wb") as f:
-      f.write(val_buf.getvalue())
-    with open(f"{os.getcwd()}/../../data/listops_test.tsv", "wb") as f:
-      f.write(test_buf.getvalue())
+    dataset_buf = bucket.download(f"data/listops_{split}.tsv")
 
-  train_dataset = preprocess_dataset(train_path, batch_size)
-  val_dataset = preprocess_dataset(val_path, batch_size)
-  test_dataset = preprocess_dataset(test_path, batch_size)
+    with open(local_dataset_path, "wb") as f:
+      f.write(dataset_buf.getvalue())
+
+  dataset = preprocess_dataset(local_dataset_path, batch_size)
 
   tf.logging.info('Finished preprocessing')
   tf.logging.info('Building vocab')
@@ -75,7 +64,7 @@ def get_datasets(n_devices,
   tokenizer = text.WhitespaceTokenizer()
 
   lengths = []
-  for i, data in enumerate(val_dataset):
+  for i, data in enumerate(dataset):
     examples = data['Source']
     examples = tokenizer.tokenize(examples.numpy())
     examples = np.reshape(examples, (-1)).tolist()
@@ -85,11 +74,12 @@ def get_datasets(n_devices,
       tf.logging.info('Processed {}'.format(i))
     if i > 1000:
       break
-  vocab_set = list(set(vocab_set))
-  tf.logging.info('Finished processing vocab size={}'.format(len(vocab_set)))
+  vocab = list(set(vocab_set))
 
-  encoder = tfds.deprecated.text.TokenTextEncoder(
-      vocab_set)
+  vocab.sort()
+  vocab.insert(0, '<pad>')
+  tf.logging.info('Finished processing vocab size={}'.format(len(vocab)))
+  encoder = tfds.deprecated.text.TokenTextEncoder(vocab)
 
   def tf_encode(x):
     result = tf.py_function(lambda s: tf.constant(encoder.encode(s.numpy())),
@@ -100,21 +90,13 @@ def get_datasets(n_devices,
 
   def tokenize(d):
     return {'inputs': tf_encode(d['Source'])[:max_length],
-            'targets': d['Target']}
+            'targets': tf.expand_dims(d['Target'] + 1, axis=0)}
+  encoder.save_to_file(f"{os.getcwd()}/../../data/listops_{split}_encoder.json")
+  dataset = dataset.map(tokenize, num_parallel_calls=AUTOTUNE)
 
-  train_dataset = train_dataset.map(tokenize, num_parallel_calls=AUTOTUNE)
-  val_dataset = val_dataset.map(tokenize, num_parallel_calls=AUTOTUNE)
-  test_dataset = test_dataset.map(tokenize, num_parallel_calls=AUTOTUNE)
+  # max_shape = {'inputs': [max_length], 'targets': []}
+  # dataset = dataset.shuffle(buffer_size=1024, reshuffle_each_iteration=True).padded_batch(batch_size, padded_shapes=max_shape)
 
-  max_shape = {'inputs': [max_length], 'targets': []}
-  train_dataset = train_dataset.shuffle(
-      buffer_size=1024, reshuffle_each_iteration=True).padded_batch(
-          batch_size, padded_shapes=max_shape)
-  val_dataset = val_dataset.padded_batch(batch_size, padded_shapes=max_shape)
-  test_dataset = test_dataset.padded_batch(batch_size, padded_shapes=max_shape)
+  # dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
 
-  train_dataset = train_dataset.prefetch(tf.data.experimental.AUTOTUNE)
-  val_dataset = val_dataset.prefetch(tf.data.experimental.AUTOTUNE)
-  test_dataset = test_dataset.prefetch(tf.data.experimental.AUTOTUNE)
-
-  return train_dataset, val_dataset, test_dataset, encoder
+  return dataset

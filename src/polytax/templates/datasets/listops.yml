@@ -4,4 +4,4 @@ input_seq_len: 128
 target_seq_len: 1
 batch_size: 16
 use_iterable_ds: True
-val_split_name: "validation"
+val_split_name: "val"

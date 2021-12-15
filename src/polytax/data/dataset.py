@@ -42,18 +42,18 @@ class ListOpsDataset(torch.utils.data.IterableDataset):
         def process_sample(sample):
             attention_mask = torch.tensor(sample["inputs"], dtype=torch.long)
             attention_mask = torch.where(attention_mask >= 1, 1, attention_mask)
-
-            labels = torch.tensor(sample["targets"], dtype=torch.long)
+            targets = torch.tensor(sample["targets"], dtype=torch.long).unsqueeze(1)
+            labels = torch.cat((targets, torch.ones_like(targets)), dim=1)
+            decoder_input_ids = torch.cat((torch.zeros_like(targets), targets), dim=1)
+            decoder_attention_mask = torch.ones_like(labels)
             sample = {
                 "input_ids": torch.tensor(
                     sample["inputs"], dtype=torch.long
                 ),
                 "attention_mask": attention_mask,
-                # "decoder_input_ids": torch.tensor(
-                #     sample["decoder_input_tokens"], dtype=torch.long
-                # ),
-                # "decoder_attention_mask": attention_mask,
-                "labels": torch.where(labels >= 32000, -100, labels).unsqueeze(1),
+                "decoder_input_ids": decoder_input_ids,
+                "decoder_attention_mask": decoder_attention_mask,
+                "labels": labels,
             }
             return sample
 

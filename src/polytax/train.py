@@ -32,6 +32,7 @@ import numpy as np
 import tensorflow as tf
 import itertools
 import t5
+import tensorflow_datasets as tfds
 import time
 import argparse
 from copy import deepcopy
@@ -42,6 +43,7 @@ from wormulon.tpu.bucket import Bucket
 from wormulon.tpu.tpu_job import TPUJob
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
+from torch.utils.data import DataLoader
 
 np_config.enable_numpy_behavior()
 from transformers import (
@@ -51,6 +53,7 @@ from transformers import (
     SwitchConfig,
     set_seed,
 )
+from polytax.data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
 from t5.data.utils import get_default_vocabulary
@@ -66,6 +69,7 @@ try:
     from torch_xla.utils import gcsfs
     from torch_xla.core.xla_model import RateTracker
     from torch_xla.test.test_utils import print_training_update, print_test_update
+    import torch_xla.distributed.parallel_loader as pl
 
     xla_found = True
 except Exception as e:
@@ -139,18 +143,17 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("distributed initialized")
 
     def _build_tasks(self):
-
         if xla_found and not self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
 
+        if self.get("run_training"):
+            self._build_train_tasks()
+        if self.get("run_evaluation"):
+            self._build_eval_tasks()
         if self.get("dataset_name") == "listops":
-            self._build_list_ops()
+            self.tokenizer = tfds.deprecated.text.TokenTextEncoder.load_from_file(f"{os.getcwd()}/../../data/listops_train_encoder.json")
         else:
-            if self.get("run_training"):
-                self.tokenizer = get_default_vocabulary()
-                self._build_train_tasks()
-            if self.get("run_evaluation"):
-                self._build_eval_tasks()
+            self.tokenizer = get_default_vocabulary()
 
         if xla_found and self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
@@ -163,39 +166,31 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         }
         return seq_len
 
-    def _build_list_ops(self):
-        train_ds, eval_ds, test_ds, encoder = listops.get_datasets(
-            n_devices=self.NUM_SHARDS,
-            task_name=self.get("dataset_name"),
-            data_dir="../../data/",
-            bucket=self.bucket,
-            batch_size=self.get("batch_size"),
-            max_length=self.get("input_seq_len"))
-        self.tokenizer = encoder
-        train_ds = train_ds.shard(num_shards=self.NUM_SHARDS, index=self.GLOBAL_RANK).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        train_ds = ListOpsDataset(train_ds)
-        self.train_loader = itertools.cycle(train_ds)
-        eval_ds = eval_ds.shard(num_shards=self.NUM_SHARDS, index=self.GLOBAL_RANK).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        eval_ds = ListOpsDataset(eval_ds)
-        self.eval_loader = itertools.cycle(eval_ds)
-        test_ds = test_ds.shard(num_shards=self.NUM_SHARDS, index=self.GLOBAL_RANK).prefetch(tf.data.AUTOTUNE).as_numpy_iterator()
-        test_ds = ListOpsDataset(test_ds)
-        self.test_loader = itertools.cycle(test_ds)
+    def _build_loader(self, dataset, cycle=False):
+        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0)
+        if xla_found:
+            loader = pl.MpDeviceLoader(loader, device)
+        if cycle:
+            loader = itertools.cycle(loader)
+        else:
+            loader = iter(loader)
+        return loader
 
     def _build_train_tasks(self):
-        mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
+        mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
-        self.train_loader = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.device, self.get("use_iterable_ds"))
+        tf_dataset, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"))
+        self.train_loader = self._build_loader(dataset, cycle=True)
 
     def _build_eval_tasks(self):
-        mixture = t5.data.get_mixture_or_task(self.get("dataset_name"))
-        tasks = t5.data.get_subtasks(mixture)
-        self.eval_tasks = seqio.evaluation.get_valid_eval_tasks(tasks, self.get("val_split_name"))
+        mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
+        tasks = seqio.get_subtasks(mixture)
+        eval_tasks = seqio.evaluation.get_valid_eval_tasks(tasks, self.get("val_split_name"))
         self.eval_datasets = {}
-        for task in self.eval_tasks:
+        for task in eval_tasks:
             ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
-            ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.device, False)
-            self.eval_datasets[task.name] = ds
+            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True)
+            self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False))
 
     def _build_model(self, train_state: "TrainState"):
         self.get("model_config")["layer_norm_epsilon"] = float(
@@ -282,36 +277,38 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 0
-        labels = x["labels"][sample_id]
-        labels_list = labels.cpu().numpy().tolist()
-        input_ids = x["input_ids"][sample_id].cpu().numpy().tolist()
-        preds = x_hat.logits[sample_id].argmax(axis=1)
-        preds_list = preds.cpu().numpy().tolist()
+        all_labels = x['labels']
+        all_preds = x_hat.logits.argmax(axis=2)
+        all_inputs = x["input_ids"]
+
+        input_list = all_inputs[sample_id].cpu().numpy().tolist()
+        label_list = all_labels[sample_id].cpu().numpy().tolist()
+        pred_list = all_preds[sample_id].cpu().numpy().tolist()
 
         # compute_accuracy
-        correct = preds.eq(labels.view_as(preds)).sum()
-        num_extra_ids = (labels == -100).sum()
-        accuracy = 100.0 * correct / (labels.nelement() - num_extra_ids)
+        correct = all_preds.eq(all_labels).sum()
+        num_extra_ids = (all_labels == -100).sum()
+        accuracy = 100.0 * correct / (all_labels.nelement() - num_extra_ids)
 
         # Prepare to decode the labels
         extra_id = 32099
         ids_to_replace_in_preds = []
-        for idx, label in enumerate(labels_list):
+        for idx, label in enumerate(label_list):
             if label == -100:
                 ids_to_replace_in_preds.append(idx)
-                labels_list[idx] = extra_id
+                label_list[idx] = extra_id
                 extra_id -= 1
 
         extra_id = 32099
-        for idx, pred in enumerate(preds_list):
+        for idx, pred in enumerate(pred_list):
             if idx in ids_to_replace_in_preds:
-                preds_list[idx] = extra_id
+                pred_list[idx] = extra_id
                 extra_id -= 1
 
-        input = self.tokenizer.decode(input_ids)
-        labels = self.tokenizer.decode(labels_list)
-        preds = self.tokenizer.decode(preds_list)
-        return input, labels, preds, accuracy
+        input = self.tokenizer.decode(input_list)
+        label = self.tokenizer.decode(label_list)
+        pred = self.tokenizer.decode(pred_list)
+        return input, label, pred, accuracy
 
     def _log_train(self, x, x_hat):
         loss = x_hat.loss.detach()
@@ -323,10 +320,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
         results = {
             "step": self.step,
-            "train_accuracy": accuracy,
-            "input_examples": input,
             "label": label,
             "pred": pred,
+            "train_accuracy": accuracy,
+            "input_examples": input,
             "train_loss": loss,
             "num_tokens": self.get("input_seq_len")
             * self.total_batch_size
@@ -350,7 +347,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "global it/s": self.tracker.global_rate(),
         }
         metric_results = {}
-        for task in self.eval_tasks:
+        for task in self.eval_datasets.keys():
             # Extract the portion of decodes corresponding to this dataset
             predictions = []
             text_preds = []
@@ -366,6 +363,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     predictions.append(task.postprocess_fn(text_pred, example=examples['input_ids'][j]))
                     targets.append(task.postprocess_fn(text_target, example=examples['input_ids'][j], is_target=True))
                     text_targets.append(text_target)
+
             for metric_fn in task.metric_fns:
                 metric_result = metric_fn(targets, predictions)
                 if np.isnan(list(metric_result.values())[0]):
@@ -420,6 +418,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 for i, x in enumerate(self.train_loader):
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
+                        print("Evaluating...")
                         self.evaluate()
                 if self.get("num_train_steps") == self.step:
                     print("Done Training")
@@ -460,21 +459,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         with torch.no_grad():
             all_examples = {}
             all_preds = {}
-            for task_name, loader in self.eval_datasets.items():
+            for task, (ds, loader) in self.eval_datasets.items():
                 examples = []
                 preds = []
-                for i, x in enumerate(loader):
-                    examples.append(x.copy())
-
+                while True:
                     try:
-                        del x["labels"]
-                    except Exception:
-                        print("no labels found")
+                        x = next(loader)
+                    except StopIteration:
+                        self.eval_datasets[task] = (ds, iter(DataLoader(IterableDataset(ds.as_numpy_iterator()), batch_size=None, shuffle=False, num_workers=0)))
+                        break
+                    examples.append(x.copy())
+                    del x["labels"]
                     outputs = self.model(**x)
                     out = outputs.logits.argmax(2)
                     preds.append(out)
-                all_examples[task_name] = examples
-                all_preds[task_name] = preds
+                all_examples[task.name] = examples
+                all_preds[task.name] = preds
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(

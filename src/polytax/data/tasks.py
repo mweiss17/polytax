@@ -1,9 +1,10 @@
 import seqio
 import functools
 import tensorflow_datasets as tfds
+from polytax.data.listops import get_listops
 from t5.data import preprocessors
 from t5.data.tasks import DEFAULT_OUTPUT_FEATURES
-from t5.data.mixtures import _glue_tasks_with_weight, _super_glue_tasks_with_weight, _super_glue_tasks_with_weight_sentinel
+from t5.data.mixtures import _glue_tasks_with_weight
 from t5.evaluation import metrics
 from t5.data.glue_utils import get_glue_metric
 from t5.data.glue_utils import get_glue_postprocess_fn
@@ -102,4 +103,12 @@ seqio.TaskRegistry.add(
     ],
     output_features=DEFAULT_OUTPUT_FEATURES,
     metric_fns=[metrics.edit_distance, metrics.sequence_accuracy],
+)
+
+seqio.TaskRegistry.add(
+    "listops",
+    seqio.FunctionDataSource(get_listops, splits=["train", "val", "test"]),
+    preprocessors=[],
+    output_features=DEFAULT_OUTPUT_FEATURES,
+    metric_fns=[metrics.sequence_accuracy],
 )

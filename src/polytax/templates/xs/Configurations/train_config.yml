@@ -16,13 +16,6 @@ target_seq_len: 8
 batch_size: 4 #per device
 use_iterable_ds: True
 
-#dataset:get xs working on tpu
-#  kwargs:
-#    name: "glue_v002_proportional" # "glue_cola_v002"
-#    split: "validation"
-#    max_seq_length: 32
-#    batch_size: 4
-#    use_iterable_ds: True
 
 # Optimizer
 optim:
@@ -43,7 +36,7 @@ training:
 # Steps
 wandb:
   log_scalars_every: 100
-eval_every: 100
+eval_every: 1000
 num_train_steps: 1000000
 
 # Logging
