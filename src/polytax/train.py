@@ -430,7 +430,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def train(self, x):
         self.model.train()
-        print(f"training x labels is on device {x['labels'].device}, model is on device {next(self.model.parameters()).device}, input_ids is on device {x['input_ids'].device}")
+        for param in self.model.parameters():
+            print(param.device)
+        for k, v in x.items():
+            print(f"{k}: {v.device}")
         self.model.to(self.device)
         x_hat = self.model(**x)
         loss = self.loss(x_hat.logits, x["labels"])
