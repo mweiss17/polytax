@@ -53,7 +53,7 @@ from transformers import (
     SwitchConfig,
     set_seed,
 )
-from polytax.data.dataset import IterableDataset
+from data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
 from t5.data.utils import get_default_vocabulary
@@ -77,9 +77,9 @@ except Exception as e:
     xla_found = False
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
-from polytax.data.utils import build_dataset, build_seqio_dataset
-from polytax.data import listops
-from polytax.data.dataset import ListOpsDataset
+from data.utils import build_dataset, build_seqio_dataset
+from data import listops
+from data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
 
 
@@ -217,7 +217,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.model = SwitchForConditionalGeneration(model_config)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
-            self.model = T5ForConditionalGeneration(model_config)
+            lstm = torch.nn.LSTM(128, 20)
+            self.model = lstm
         train_state.load_in_model(self.model)
         self.model.to(self.device)
 
@@ -411,6 +412,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             loss = xm.optimizer_step(self.optim, barrier=True)
         else:
             self.optim.step()
+        self.hidden = self.repackage_hidden(self.hidden)
         self.optim.zero_grad()
 
 
@@ -420,6 +422,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_training"):
             print("Training...")
             while True:
+                hidden1 = torch.zeros((1, 16, 20))
+                hidden2 = torch.zeros((1, 16, 20))
+
+                hidden1 = hidden1.type(torch.FloatTensor)
+                hidden2 = hidden2.type(torch.FloatTensor)
+                self.hidden = (hidden1,
+                        hidden2)
                 for i, x in enumerate(self.train_loader):
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
@@ -432,11 +441,18 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if xla_found:
             self.finish()
         return train_state
-
+    def repackage_hidden(self, h):
+        """Wraps hidden states in new Tensors, to detach them from their history."""
+        if isinstance(h, torch.Tensor):
+            return h.detach()
+        else:
+            return tuple(self.repackage_hidden(v) for v in h)
     def train(self, x):
         self.model.train()
-        x_hat = self.model(**x)
-        loss = self.loss(x_hat.logits, x["labels"])
+        hidden = self.hidden
+        torch.set_printoptions(threshold=10_000)
+        outputs, hidden = self.model(x['input_ids'])
+        loss = self.loss(outputs.view(16,20), x["labels"])
         loss.backward()
 
         self.step_gradients()
@@ -461,6 +477,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def evaluate(self):
         self.model.eval()
+        hidden1 = torch.zeros((1, 16, 20))
+        hidden2 = torch.zeros((1, 16, 20))
+
+        hidden1 = hidden1.type(torch.FloatTensor)
+        hidden2 = hidden2.type(torch.FloatTensor)
+        hidden = (hidden1,
+                hidden2)
         with torch.no_grad():
             all_examples = {}
             all_preds = {}
@@ -475,7 +498,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         break
                     examples.append(x.copy())
                     del x["labels"]
-                    outputs = self.model(**x)
+                    outputs, hidden = self.model(x['input_ids'])
                     out = outputs.logits.argmax(2)
                     preds.append(out)
                 all_examples[task.name] = examples
@@ -488,6 +511,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             # Otherwise just call the function to log directly
             else:
                 self._log_eval(all_preds, all_examples)
+            hidden = self.repackage_hidden(hidden)
 
 
     def finish(self):

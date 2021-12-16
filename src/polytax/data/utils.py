@@ -9,8 +9,8 @@ from torch.utils.data import DataLoader
 from tensorflow.python.data.ops.dataset_ops import ParallelMapDataset
 from torch.utils.data import SequentialSampler, BatchSampler
 
-from polytax.data import dataset, listops, tasks  # pylint: disable=unused-import
-from polytax.data.dataset import IterableDataset, MapDataset
+from data import dataset, listops, tasks  # pylint: disable=unused-import
+from data.dataset import IterableDataset, MapDataset
 
 """ BUILD TASKS AND DATASETS """
 
