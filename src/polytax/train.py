@@ -375,7 +375,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             metric_results[f"eval/{task.name}/text_targets"] = text_targets[:10]
 
         results["eval_accuracy"] = metric_results
-        if self.get("use_wandb"):
+        if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
         else:
             print(results, flush=True)
