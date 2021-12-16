@@ -45,7 +45,7 @@ def get_listops(split='train', shuffle_files=False, seed=None):
   batch_size = 256
   bucket = Bucket("must-results")
 
-  local_dataset_path = f"{os.getcwd()}/../../data/listops_{split}.tsv"
+  local_dataset_path = f"{os.getcwd()}/data/listops_{split}.tsv"
   os.makedirs(os.path.dirname(local_dataset_path), exist_ok=True)
 
   if not os.path.exists(local_dataset_path):
@@ -91,7 +91,7 @@ def get_listops(split='train', shuffle_files=False, seed=None):
   def tokenize(d):
     return {'inputs': tf_encode(d['Source'])[:max_length],
             'targets': tf.expand_dims(d['Target'] + 1, axis=0)}
-  encoder.save_to_file(f"{os.getcwd()}/../../data/listops_{split}_encoder.json")
+  encoder.save_to_file(f"{os.getcwd()}/data/listops_{split}_encoder.json")
   dataset = dataset.map(tokenize, num_parallel_calls=AUTOTUNE)
 
   # max_shape = {'inputs': [max_length], 'targets': []}

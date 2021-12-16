@@ -151,7 +151,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_evaluation"):
             self._build_eval_tasks()
         if self.get("dataset_name") == "listops":
-            self.tokenizer = tfds.deprecated.text.TokenTextEncoder.load_from_file(f"{os.getcwd()}/../../data/listops_train_encoder.json")
+            self.tokenizer = tfds.deprecated.text.TokenTextEncoder.load_from_file(f"{os.getcwd()}/data/listops_train_encoder.json")
         else:
             self.tokenizer = get_default_vocabulary()
 
