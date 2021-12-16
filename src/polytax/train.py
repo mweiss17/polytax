@@ -144,6 +144,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("distributed initialized")
 
     def _build_tasks(self):
+        print("into _build_tasks")
         if xla_found and not self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
         print("building train tasks")
@@ -174,7 +175,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_loader(self, dataset, cycle=False):
         loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0)
         if xla_found:
-            loader = pl.MpDeviceLoader(loader, device)
+            loader = pl.MpDeviceLoader(loader, self.device)
         if cycle:
             loader = itertools.cycle(loader)
         else:
