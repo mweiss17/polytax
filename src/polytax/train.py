@@ -495,7 +495,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-runs"
+    WANDB_PROJECT = "polytax-exps"
 
     def __init__(self):
         super(Nanny, self).__init__()
@@ -553,7 +553,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     # if job.died:
                     #     state = "died"
                 await asyncio.sleep(1)
-
+            print(f"finished: {state}, {self.jobs}")
             if state == "failed" or state == "died":
                 for future, job in jobs:
                     print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
