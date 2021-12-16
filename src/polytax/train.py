@@ -466,7 +466,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     try:
                         x = next(loader)
                     except StopIteration:
-                        self.eval_datasets[task] = (ds, iter(DataLoader(IterableDataset(ds.as_numpy_iterator()), batch_size=None, shuffle=False, num_workers=0)))
+                        self.eval_datasets[task] = (ds, self._build_loader(IterableDataset(ds.as_numpy_iterator())), batch_size=None, shuffle=False, num_workers=0)))
                         break
                     examples.append(x.copy())
                     del x["labels"]
@@ -553,12 +553,10 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     # if job.died:
                     #     state = "died"
                 await asyncio.sleep(1)
-            print(f"finished: {state}, {self.jobs}")
-            if state == "failed" or state == "died":
-                for future, job in jobs:
-                    print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
-                    job.clean_up()
-                    # self.launch(job.trainer, train_state)
+            for future, job in jobs:
+                print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
+                job.clean_up()
+                # self.launch(job.trainer, train_state)
 
         else:
             trainer = Trainer(self)
