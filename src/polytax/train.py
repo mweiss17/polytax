@@ -49,8 +49,10 @@ np_config.enable_numpy_behavior()
 from transformers import (
     T5ForConditionalGeneration,
     SwitchForConditionalGeneration,
+    MustForConditionalGeneration,
     T5Config,
     SwitchConfig,
+    MustConfig,
     set_seed,
 )
 from polytax.data.dataset import IterableDataset
@@ -197,19 +199,20 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.get("model_config")["layer_norm_epsilon"]
         )
         self.get("model_config")["vocab_size"] = self.tokenizer.vocab_size
-
+        model_config = self.get("model_config").copy()
+        model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
+        model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
+        model_config["LOCAL_RANK"] = self.LOCAL_RANK
+        model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
+        model_config["NUM_SHARDS"] = self.NUM_SHARDS
+        model_config["xla_found"] = xla_found
+        model_config["seed"] = self.get("seed")
         if "switch" in self.get("model_config/model_type"):
-            model_config = self.get("model_config").copy()
-            model_config["LOCAL_WORLD_SIZE"] = self.LOCAL_WORLD_SIZE
-            model_config["GLOBAL_WORLD_SIZE"] = self.GLOBAL_WORLD_SIZE
-            model_config["LOCAL_RANK"] = self.LOCAL_RANK
-            model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
-            model_config["NUM_SHARDS"] = self.NUM_SHARDS
-            model_config["xla_found"] = xla_found
-            model_config["seed"] = self.get("seed")
             model_config = SwitchConfig.from_dict(model_config)
-
             self.model = SwitchForConditionalGeneration(model_config)
+        elif "must" in self.get("model_config/model_type"):
+            model_config = MustConfig.from_dict(model_config)
+            self.model = MustForConditionalGeneration(model_config)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
@@ -430,10 +433,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def train(self, x):
         self.model.train()
-        for param in self.model.parameters():
-            print(param.device)
-        for k, v in x.items():
-            print(f"{k}: {v.device}")
         self.model.to(self.device)
         x_hat = self.model(**x)
         loss = self.loss(x_hat.logits, x["labels"])
