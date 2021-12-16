@@ -466,7 +466,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     try:
                         x = next(loader)
                     except StopIteration:
-                        rebuilt_ds = IterableDataset(ds.as_numpy_iterator(), batch_size=None, shuffle=False, num_workers=0)
+                        rebuilt_ds = IterableDataset(ds.as_numpy_iterator())
                         self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds))
                         break
                     examples.append(x.copy())
