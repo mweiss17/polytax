@@ -113,7 +113,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.IS_LOCAL_MASTER = self.LOCAL_RANK == 0
         self.IS_GLOBAL_MASTER = self.GLOBAL_RANK == 0
         self.IS_MULTI_HOST = self.GLOBAL_WORLD_SIZE > 1
-        print(f"LOCAL_WORLD_SIZE {self.LOCAL_WORLD_SIZE}, GLOBAL_RANK {self.GLOBAL_RANK}, self.IS_LOCAL_MASTER {self.IS_LOCAL_MASTER}, self.IS_GLOBAL_MASTER {self.IS_GLOBAL_MASTER}")
 
     def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
@@ -144,17 +143,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("distributed initialized")
 
     def _build_tasks(self):
-        print("into _build_tasks")
         if xla_found and not self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
-        print("building train tasks")
         if self.get("run_training"):
             self._build_train_tasks()
-        print("building eval tasks")
 
         if self.get("run_evaluation"):
             self._build_eval_tasks()
-        print("building tokenizer")
         if self.get("dataset_name") == "listops":
             self.tokenizer = tfds.deprecated.text.TokenTextEncoder.load_from_file(f"{os.getcwd()}/../../data/listops_train_encoder.json")
         else:
@@ -162,7 +157,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if xla_found and self.IS_LOCAL_MASTER:
             xm.rendezvous("download_only_once")
-        print("done building tasks")
 
     @property
     def seq_len(self):
