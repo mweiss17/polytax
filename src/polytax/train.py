@@ -554,7 +554,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                     # if job.died:
                     #     state = "died"
                 await asyncio.sleep(1)
-            for future, job in jobs:
+            for future, job in self.jobs:
                 print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
                 job.clean_up()
                 # self.launch(job.trainer, train_state)
