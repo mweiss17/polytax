@@ -277,13 +277,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 0
-        all_labels = x['labels']
-        all_preds = x_hat.logits.argmax(axis=2)
-        all_inputs = x["input_ids"]
+        all_labels = x['labels'].cpu()
+        all_preds = x_hat.logits.argmax(axis=2).cpu()
+        all_inputs = x["input_ids"].cpu()
 
-        input_list = all_inputs[sample_id].cpu().numpy().tolist()
-        label_list = all_labels[sample_id].cpu().numpy().tolist()
-        pred_list = all_preds[sample_id].cpu().numpy().tolist()
+        input_list = all_inputs[sample_id].numpy().tolist()
+        label_list = all_labels[sample_id].numpy().tolist()
+        pred_list = all_preds[sample_id].numpy().tolist()
 
         # compute_accuracy
         correct = all_preds.eq(all_labels).sum()
@@ -311,7 +311,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return input, label, pred, accuracy
 
     def _log_train(self, x, x_hat):
-        loss = x_hat.loss.detach()
+        loss = x_hat.loss.detach().cpu()
 
         # Print to console
         print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
