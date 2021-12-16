@@ -12,9 +12,8 @@ class IterableDataset(torch.utils.data.IterableDataset):
                 attention_mask = torch.tensor(sample["encoder_input_tokens"], dtype=torch.long)
                 attention_mask = torch.where(attention_mask >= 1, 1, attention_mask)
             else:
-                attention_mask = torch.tensor(
-                    [sample["encoder_segment_ids"]], dtype=torch.long
-                ).squeeze()
+                attention_mask = torch.tensor(sample["encoder_segment_ids"], dtype=torch.long
+                )
             labels = torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)
             sample = {
                 "input_ids": torch.tensor(
