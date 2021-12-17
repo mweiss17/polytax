@@ -419,6 +419,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("Training...")
             while True:
                 for i, x in enumerate(self.train_loader):
+                    import torch_xla.debug.metrics as met
+
+                    print(met.metrics_report())
+
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")
@@ -500,7 +504,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps"
+    WANDB_PROJECT = "polytax-exps-1"
 
     def __init__(self):
         super(Nanny, self).__init__()
