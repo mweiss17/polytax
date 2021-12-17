@@ -280,13 +280,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def decode_and_compute_accuracy(self, x, x_hat):
         sample_id = 0
-        all_labels = x['labels'].cpu()
-        all_preds = x_hat.logits.argmax(axis=2).cpu()
-        all_inputs = x["input_ids"].cpu()
+        all_labels = x['labels']
+        all_preds = x_hat.logits.argmax(axis=2)
+        all_inputs = x["input_ids"]
 
-        input_list = all_inputs[sample_id].numpy().tolist()
-        label_list = all_labels[sample_id].numpy().tolist()
-        pred_list = all_preds[sample_id].numpy().tolist()
+        input_list = all_inputs[sample_id].cpu().numpy().tolist()
+        label_list = all_labels[sample_id].cpu().numpy().tolist()
+        pred_list = all_preds[sample_id].cpu().numpy().tolist()
 
         # compute_accuracy
         correct = all_preds.eq(all_labels).sum()
@@ -311,7 +311,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         input = self.tokenizer.decode(input_list)
         label = self.tokenizer.decode(label_list)
         pred = self.tokenizer.decode(pred_list)
-        return input, label, pred, accuracy
+        return input, label, pred, accuracy.item()
 
     def _log_train(self, x, x_hat):
         loss = x_hat.loss.detach().cpu()
@@ -419,9 +419,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("Training...")
             while True:
                 for i, x in enumerate(self.train_loader):
-                    import torch_xla.debug.metrics as met
+                    if xla_found:
+                        import torch_xla.debug.metrics as met
 
-                    print(met.metrics_report())
+                        xm.master_print(met.metrics_report())
 
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
