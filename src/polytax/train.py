@@ -421,7 +421,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 for i, x in enumerate(self.train_loader):
                     import torch_xla.debug.metrics as met
 
-                    print(met.metrics_report())
+                    # print(met.metrics_report())
 
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
