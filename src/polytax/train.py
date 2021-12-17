@@ -181,7 +181,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_train_tasks(self):
         mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
-        tf_dataset, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"))
+        tf_dataset, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
         self.train_loader = self._build_loader(dataset, cycle=True)
 
     def _build_eval_tasks(self):
@@ -191,7 +191,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.eval_datasets = {}
         for task in eval_tasks:
             ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
-            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True)
+            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True, device=self.device)
             self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False))
 
     def _build_model(self, train_state: "TrainState"):
@@ -421,7 +421,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 for i, x in enumerate(self.train_loader):
                     import torch_xla.debug.metrics as met
 
-                    # print(met.metrics_report())
+                    print(met.metrics_report())
 
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
@@ -474,7 +474,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     try:
                         x = next(loader)
                     except StopIteration:
-                        rebuilt_ds = IterableDataset(ds.as_numpy_iterator())
+                        rebuilt_ds = IterableDataset(ds.as_numpy_iterator(), self.device)
                         self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds))
                         break
                     examples.append(x.copy())
