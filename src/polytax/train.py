@@ -217,7 +217,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.model = SwitchForConditionalGeneration(model_config)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
-            lstm = torch.nn.LSTM(128, 20)
+            lstm = torch.nn.LSTM(20, 20)
             self.model = lstm
         train_state.load_in_model(self.model)
         self.model.to(self.device)
@@ -422,6 +422,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("run_training"):
             print("Training...")
             while True:
+                embedding = torch.nn.Embedding(
+                num_embeddings=320000,
+                embedding_dim=20)
                 hidden1 = torch.zeros((1, 16, 20))
                 hidden2 = torch.zeros((1, 16, 20))
 
@@ -429,6 +432,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 hidden2 = hidden2.type(torch.FloatTensor)
                 self.hidden = (hidden1,
                         hidden2)
+                self.embedding = embedding
                 for i, x in enumerate(self.train_loader):
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
@@ -447,12 +451,21 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             return h.detach()
         else:
             return tuple(self.repackage_hidden(v) for v in h)
+
     def train(self, x):
         self.model.train()
-        hidden = self.hidden
+        itTensor = x['input_ids']
+        itTensor = itTensor.type(torch.LongTensor)
+        fc   = torch.nn.Linear(128, 320000)
         torch.set_printoptions(threshold=10_000)
-        outputs, hidden = self.model(x['input_ids'])
-        loss = self.loss(outputs.view(16,20), x["labels"])
+        embed= self.embedding(itTensor)
+        embed = embed.type(torch.FloatTensor)
+        outputs, self.hidden = self.model(embed)
+        out=outputs.reshape(16,20,128)
+        output_f=fc(out)
+        from torch.autograd import Variable
+        output_f = Variable(output_f, requires_grad = True)
+        loss = self.loss(output_f, x["labels"])
         loss.backward()
 
         self.step_gradients()
@@ -460,11 +473,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(
-                    self._log_train, args=(x, x_hat), run_async=True
+                    self._log_train, args=(x, output_f), run_async=True
                 )
             # Otherwise just call the function to log directly
             else:
-                self._log_train(x, x_hat)
+                self._log_train(x, output_f)
 
         if self.checkpoint_now:
             self.checkpoint()
@@ -498,7 +511,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         break
                     examples.append(x.copy())
                     del x["labels"]
-                    outputs, hidden = self.model(x['input_ids'])
+                    outputs, hidden = self.model(x['input_ids'].view(1, 16, 128))
                     out = outputs.logits.argmax(2)
                     preds.append(out)
                 all_examples[task.name] = examples
