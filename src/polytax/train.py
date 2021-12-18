@@ -450,10 +450,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("Training...")
             while True:
                 for i, x in enumerate(self.train_loader):
-                    # if xla_found:
-                    #     import torch_xla.debug.metrics as met
-                    #
-                    #     xm.master_print(met.metrics_report())
+                    if xla_found:
+                        import torch_xla.debug.metrics as met
+
+                        xm.master_print(met.metrics_report())
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")

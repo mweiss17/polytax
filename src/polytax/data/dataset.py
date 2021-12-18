@@ -5,7 +5,7 @@ class IterableDataset(torch.utils.data.IterableDataset):
     # TODO: put on xla
     def __init__(self, np_iterator, device):
         self.np_iterator = np_iterator
-        self.device = torch.device("cpu") #device
+        self.device = device
 
     def __iter__(self):
         def process_sample(sample):
