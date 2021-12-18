@@ -317,9 +317,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _log_train(self, x, x_hat):
         loss = x_hat.loss.item()
 
-        # Print to console
-        print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
-
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
         results = {
@@ -338,13 +335,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Return if we don't have wandb
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
+            print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
         elif xla_found and self.IS_GLOBAL_MASTER:
             xm.master_print(results)
+            self.bucket.touch(self.experiment_directory + "/heartbeat")
+            print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
         elif not xla_found:
             print(results)
-
-        if xla_found:
-            self.bucket.touch(self.experiment_directory + "/heartbeat")
+            print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
 
     def _log_eval(self, all_preds, all_examples):
         results = {
