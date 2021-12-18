@@ -332,8 +332,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             metsumm(stepno=self.step)
 
         loss = x_hat.loss.item()
-        aux_loss = x_hat.aux_loss.item()
-
+        try:
+            aux_loss = x_hat.aux_loss.item()
+        except AttributeError:
+            aux_loss = 0.0
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
         results = {
