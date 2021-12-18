@@ -55,7 +55,7 @@ from transformers import (
     MustConfig,
     set_seed,
 )
-from polytax.data.dataset import IterableDataset
+from data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
 from t5.data.utils import get_default_vocabulary
@@ -79,11 +79,46 @@ except Exception as e:
     xla_found = False
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
-from polytax.data.utils import build_dataset, build_seqio_dataset
-from polytax.data import listops
-from polytax.data.dataset import ListOpsDataset
+from data.utils import build_dataset, build_seqio_dataset
+from data import listops
+from data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
 
+class RNNModel(torch.nn.Module):
+    """Container module with an encoder, a recurrent module, and a decoder."""
+
+    def __init__(self):
+        super(RNNModel, self).__init__()
+        self.embedding = torch.nn.Embedding(
+            num_embeddings=320000,
+            embedding_dim=20)
+        self.lstm = torch.nn.LSTM(20, 20)
+        self.hidden1 = torch.randn(1, 16, 20)
+        self.hidden2 = torch.randn(1, 16, 20)
+        
+        self.hidden = (self.hidden1,
+          self.hidden2)
+
+        self.decoder = torch.nn.Linear(128, 320000)
+        self.softmax = torch.nn.Softmax(dim=-1)
+        self.act = torch.nn.Softplus(beta = 1, threshold = 20)
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+        self.embedding.weight.data.uniform_(-initrange, initrange)
+        self.decoder.bias.data.zero_()
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, input, hidden = None):
+        # TO DO: USE HIDDEN
+        embed= self.embedding(input)
+        out, hidden = self.lstm(embed)
+        out=out.reshape(16,20,128)
+        output = self.decoder(out)
+        lstm_out = self.act(output)
+        final_output = self.softmax(lstm_out)
+        return final_output, hidden
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
@@ -213,9 +248,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         elif "must" in self.get("model_config/model_type"):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
+        elif "lstm" in self.get("model_config/model_type"):
+            # TO DO: Improve config
+            self.model = RNNModel()
         else:
-            model_config = T5Config.from_dict(self.get("model_config"))
-            self.model = T5ForConditionalGeneration(model_config)
+            self.model = RNNModel()
         train_state.load_in_model(self.model)
         self.model.to(self.device)
 
@@ -387,6 +424,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def loss(self, logits, labels):
         loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+        print(">>> LOSS RETURNED", loss)
         return loss
 
     def step_gradients(self):
@@ -440,10 +478,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        x_hat = self.model(**x)
-        loss = self.loss(x_hat.logits, x["labels"])
+        print("X input ids shape", x['input_ids'].shape)
+        x_hat, _ = self.model(x['input_ids'])
+        print("x_hat type", type(x_hat))
+        print("X_hat returned is", x_hat.shape)
+        loss = self.loss(x_hat, x["labels"])
+        print(">>>> Loss for LSTM is", loss)
         loss.backward()
-
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
+        for p in self.model.parameters():
+            p.data.add_(1, p.grad.data)
         self.step_gradients()
         if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
@@ -453,7 +497,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 )
             # Otherwise just call the function to log directly
             else:
-                self._log_train(x, x_hat)
+                pass
+                #self._log_train(x, x_hat)
 
         if self.checkpoint_now:
             self.checkpoint()
@@ -465,6 +510,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 
     def evaluate(self):
+        print(">>>> THIS SHOULD NOT PRINT")
         self.model.eval()
         with torch.no_grad():
             all_examples = {}

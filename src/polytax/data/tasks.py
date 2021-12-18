@@ -1,7 +1,7 @@
 import seqio
 import functools
 import tensorflow_datasets as tfds
-from polytax.data.listops import get_listops
+from data.listops import get_listops
 from t5.data import preprocessors
 from t5.data.tasks import DEFAULT_OUTPUT_FEATURES
 from t5.data.mixtures import _glue_tasks_with_weight
