@@ -169,7 +169,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return seq_len
 
     def _build_loader(self, dataset, cycle=False):
-        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0)
+        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=12)
         if xla_found:
             loader = pl.MpDeviceLoader(loader, self.device)
         if cycle:
@@ -454,9 +454,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     #     import torch_xla.debug.metrics as met
                     #
                     #     xm.master_print(met.metrics_report())
-                    self.metsumm("before train(x)")
                     self.train(x)
-                    self.metsumm("after train(x)")
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")
                         self.evaluate()
