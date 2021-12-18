@@ -336,11 +336,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "global it/s": self.tracker.global_rate(),
         }
         # Return if we don't have wandb
-        if self.get("use_wandb"):
+        if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
-        elif xla_found:
+        elif xla_found and self.IS_GLOBAL_MASTER:
             xm.master_print(results)
-        else:
+        elif not xla_found:
             print(results)
 
         if xla_found:
