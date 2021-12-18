@@ -405,11 +405,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         else:
             print(results, flush=True)
 
-    def loss(self, logits, labels):
-        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
-        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-        return loss
-
     def step_gradients(self):
         if xla_found and self.IS_MULTI_HOST:
             gradients = xm._fetch_gradients(self.optim)
@@ -462,8 +457,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.model.train()
         self.model.to(self.device)
         x_hat = self.model(**x)
-        loss = self.loss(x_hat.logits, x["labels"])
-        loss.backward()
+        x_hat.loss.backward()
 
         self.step_gradients()
         if self.log_scalars_now:
