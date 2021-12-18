@@ -331,6 +331,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
             metsumm(stepno=self.step)
 
+        if xla_found:
+            import torch_xla.debug.metrics as met
+
+            xm.master_print(met.metrics_report())
+
         loss = x_hat.loss.item()
         try:
             aux_loss = x_hat.aux_loss.item()
@@ -429,20 +434,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.optim.step()
         self.optim.zero_grad()
 
-    def metsumm(self, stepno=''):
-        if xla_found:
-            import torch_xla.debug.metrics as met
-            x = met.metrics_report().split('\n')
-            for i, line in enumerate(x):
-                if 'CompileTime' in line or 'aten::' in line:
-                    key = line.split()[-1]
-                    value = x[i + 1].split()[-1]
-                    print(
-                        'step {}, key {}, value {}'.format(
-                            stepno, key, value
-                        )
-                    )
-
     @register_default_dispatch
     def run(self, train_state):
         self._build(train_state)
@@ -450,10 +441,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("Training...")
             while True:
                 for i, x in enumerate(self.train_loader):
-                    if xla_found:
-                        import torch_xla.debug.metrics as met
 
-                        xm.master_print(met.metrics_report())
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")
