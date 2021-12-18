@@ -316,6 +316,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _log_train(self, x, x_hat):
         loss = x_hat.loss.item()
+        aux_loss = x_hat.aux_loss.item()
 
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
@@ -325,7 +326,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "pred": pred,
             "train_accuracy": accuracy,
             "input_examples": input,
-            "train_loss": loss,
+            "train_task_loss": loss - aux_loss,
+            "train_total_loss": loss,
+            "train_aux_loss": aux_loss,
             "num_tokens": self.get("input_seq_len")
             * self.total_batch_size
             * self.step,
@@ -420,10 +423,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("Training...")
             while True:
                 for i, x in enumerate(self.train_loader):
-                    # if xla_found:
-                    #     import torch_xla.debug.metrics as met
-                    #
-                    #     xm.master_print(met.metrics_report())
+                    if xla_found:
+                        import torch_xla.debug.metrics as met
+
+                        xm.master_print(met.metrics_report())
 
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
@@ -459,10 +462,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.checkpoint()
 
         self.next_step()
+        self.tracker.add(1)
         if xla_found:
             xm.mark_step()
-        self.tracker.add(1)
-
 
     def evaluate(self):
         self.model.eval()
@@ -524,20 +526,26 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         return wandb_run_id
 
     async def run(self):
-        train_state = TrainState.initial_state(step=self.step, epoch=self.epoch,
-                                               misc_attributes={"wandb_run_id": self.setup_wandb()})
         if self.get("use_tpu"):
             manager = TPUManager(**self.get("tpu/kwargs"))
             tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
-            for i in range(self.get("distributed/kwargs/world_size")):
-                print(f"creating job-{i}")
+            jobs = []
+            for i, tpu in enumerate(tpus):
+                print(f"Dibs on TPU: {tpu}, creating job-{i}")
                 trainer = Trainer(self)
                 env_stmts = trainer.get("job/kwargs/env_stmts")
                 env_stmts.append(f"export WANDB_API_KEY={os.environ.get('WANDB_API_KEY', '')};")
                 trainer.set('job/kwargs/env_stmts', env_stmts)
-                trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
+                if len(tpus) > 1:
+                    trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
                 trainer.set('distributed/kwargs/rank', i)
-                job = TPUJob(trainer, train_state, tpus[i])
+                jobs.append(TPUJob(trainer, tpu))
+
+        train_state = TrainState.initial_state(step=self.step, epoch=self.epoch,
+                                               misc_attributes={"wandb_run_id": self.setup_wandb()})
+        if self.get("use_tpu"):
+            for job, tpu in zip(jobs, tpus):
+                job.arm(train_state, restart=False)
                 try:
                     future = job.submit()
                 except Exception as e:
@@ -581,6 +589,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         print("Exiting gracefully")
         for future, job in self.jobs:
             job.clean_up()
+            print(f"{job.tpu} is now available")
+            print(f"exited {job.trainer.wandb_run.get_url()}")
         sys.exit(0)
 
 
