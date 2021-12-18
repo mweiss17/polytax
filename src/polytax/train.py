@@ -278,7 +278,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
             torch.save(buffer, path)
 
-    def decode_and_compute_accuracy(self, x, x_hat):
+    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False):
         sample_id = 0
         all_labels = x['labels']
         all_preds = x_hat.logits.argmax(axis=2)
@@ -292,29 +292,30 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         correct = all_preds.eq(all_labels).sum()
         num_extra_ids = (all_labels == -100).sum()
         accuracy = 100.0 * correct / (all_labels.nelement() - num_extra_ids)
+        if compute_examples:
+            # Prepare to decode the labels
+            extra_id = 32099
+            ids_to_replace_in_preds = []
+            for idx, label in enumerate(label_list):
+                if label == -100:
+                    ids_to_replace_in_preds.append(idx)
+                    label_list[idx] = extra_id
+                    extra_id -= 1
 
-        # Prepare to decode the labels
-        extra_id = 32099
-        ids_to_replace_in_preds = []
-        for idx, label in enumerate(label_list):
-            if label == -100:
-                ids_to_replace_in_preds.append(idx)
-                label_list[idx] = extra_id
-                extra_id -= 1
+            extra_id = 32099
+            for idx, pred in enumerate(pred_list):
+                if idx in ids_to_replace_in_preds:
+                    pred_list[idx] = extra_id
+                    extra_id -= 1
 
-        extra_id = 32099
-        for idx, pred in enumerate(pred_list):
-            if idx in ids_to_replace_in_preds:
-                pred_list[idx] = extra_id
-                extra_id -= 1
-
-        input = self.tokenizer.decode(input_list)
-        label = self.tokenizer.decode(label_list)
-        pred = self.tokenizer.decode(pred_list)
-        return input, label, pred, accuracy.item()
+            input = self.tokenizer.decode(input_list)
+            label = self.tokenizer.decode(label_list)
+            pred = self.tokenizer.decode(pred_list)
+            return input, label, pred, accuracy.item()
+        return None, None, None, accuracy.item()
 
     def _log_train(self, x, x_hat):
-        loss = x_hat.loss.detach().cpu()
+        loss = x_hat.loss.item()
 
         # Print to console
         print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
@@ -444,7 +445,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss.backward()
 
         self.step_gradients()
-        if self.log_scalars_now and self.IS_GLOBAL_MASTER:
+        if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
                 xm.add_step_closure(
