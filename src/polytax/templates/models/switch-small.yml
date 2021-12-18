@@ -11,7 +11,7 @@ model_config:
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
-  model_type: "t5-small"
+  model_type: "switch-small"
   num_decoder_layers: 6
   num_heads: 8
   num_layers: 6
@@ -21,4 +21,5 @@ model_config:
   use_cache: false
   cache_dir: "/tmp/"
   vocab_size: 32003
-  n_experts: 1
+  capacity_factor: 1.0
+  n_experts: 8

@@ -1,4 +1,3 @@
-
 # Model Config
 model_config:
   d_ff: 3072

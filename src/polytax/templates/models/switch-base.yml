@@ -1,4 +1,3 @@
-
 # Model Config
 model_config:
   d_ff: 3072
@@ -22,4 +21,4 @@ model_config:
   use_cache: false
   cache_dir: "/tmp/"
   vocab_size: 32003
-  n_experts: 1
+  n_experts: 8
