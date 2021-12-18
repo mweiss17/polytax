@@ -338,6 +338,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         # Return if we don't have wandb
         if self.get("use_wandb"):
             self.wandb_log(**results)
+        elif xla_found:
+            xm.master_print(results)
         else:
             print(results)
 
