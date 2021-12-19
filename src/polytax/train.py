@@ -24,9 +24,11 @@ import os
 import io
 import sys
 import signal
+from torch.nn.modules import rnn
 import wandb
 import asyncio
 import traceback
+import models.model as model
 import seqio
 import numpy as np
 import tensorflow as tf
@@ -83,7 +85,6 @@ from polytax.data.utils import build_dataset, build_seqio_dataset
 from polytax.data import listops
 from polytax.data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
-
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
@@ -181,7 +182,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_train_tasks(self):
         mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
-        tf_dataset, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
+        _, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
         self.train_loader = self._build_loader(dataset, cycle=True)
 
     def _build_eval_tasks(self):
@@ -213,6 +214,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         elif "must" in self.get("model_config/model_type"):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
+        elif "lstm" in self.get("model_config/model_type"):
+            input_seq_len = self.get("input_seq_len")
+            target_seq_len = self.get("target_seq_len")
+            batch_size = self.get("batch_size")
+            vocab_total_size = self.get("vocab_total_size")
+            self.model = model.RNNModel(input_seq_len, target_seq_len, batch_size, vocab_total_size)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
@@ -278,10 +285,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
             torch.save(buffer, path)
 
-    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False):
+    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False, is_rnn = False):
         sample_id = 0
         all_labels = x['labels']
-        all_preds = x_hat.logits.argmax(axis=2)
+        if is_rnn is False:
+            all_preds = x_hat.logits.argmax(axis=2)
+        else:
+            all_preds = x_hat.argmax(axis=2)
         all_inputs = x["input_ids"]
 
         input_list = all_inputs[sample_id].cpu().numpy().tolist()
@@ -314,7 +324,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             return input, label, pred, accuracy.item()
         return None, None, None, accuracy.item()
 
-    def _log_train(self, x, x_hat):
+    def _log_train(self, x, x_hat, rnn_loss = None):
         if xla_found:
             def metsumm(stepno=''):
                 import torch_xla.debug.metrics as met
@@ -335,14 +345,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             import torch_xla.debug.metrics as met
 
             xm.master_print(met.metrics_report())
+        is_rnn = False
+        try:
+            loss = x_hat.loss.item()
+        except AttributeError:
+            is_rnn = True
+            if rnn_loss is not None:
+                loss = rnn_loss
+            else:
+                loss = 0.0
 
-        loss = x_hat.loss.item()
         try:
             aux_loss = x_hat.aux_loss.item()
         except AttributeError:
             aux_loss = 0.0
         # Get a text example and log it
-        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
+        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, False, is_rnn)
         results = {
             "step": self.step,
             "label": label,
@@ -383,7 +401,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             text_preds = []
             targets = []
             text_targets = []
-            for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
+            for _, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
                 preds = preds.cpu().tolist()
                 for j, pred in enumerate(preds):
                     target = examples['labels'][j].tolist()
@@ -454,22 +472,42 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.finish()
         return train_state
 
+    # Used only for RNN models, implicit loss used for HF models
+    def loss(self, logits, labels):
+        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
+        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+        return loss
+
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        x_hat = self.model(**x)
-        x_hat.loss.backward()
+        rnn_loss = 0.0
+        if "lstm" in self.get("model_config/model_type"):
+            x_hat, _ = self.model(**x)
+            loss = self.loss(x_hat, x["labels"])
+            loss.backward()
+            rnn_loss = loss
+        else:
+            x_hat = self.model(**x)
+            x_hat.loss.backward()
 
         self.step_gradients()
         if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
-            if xla_found:
+            if xla_found and "lstm" not in self.get("model_config/model_type"):
                 xm.add_step_closure(
                     self._log_train, args=(x, x_hat), run_async=True
                 )
+            elif xla_found and "lstm" in self.get("model_config/model_type"):
+                xm.add_step_closure(
+                    self._log_train, args=(x, x_hat, rnn_loss), run_async=True
+                )
             # Otherwise just call the function to log directly
             else:
-                self._log_train(x, x_hat)
+                if "lstm" not in self.get("model_config/model_type"):
+                    self._log_train(x, x_hat)
+                else:
+                    self._log_train(x, x_hat, rnn_loss)
 
         if self.checkpoint_now:
             self.checkpoint()
@@ -497,7 +535,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     examples.append(x.copy())
                     del x["labels"]
                     outputs = self.model(**x)
-                    out = outputs.logits.argmax(2)
+                    if "lstm" in self.get("model_config/model_type"):
+                        out = outputs.argmax(2)
+                    else:
+                        out = outputs.logits.argmax(2)
                     preds.append(out)
                 all_examples[task.name] = examples
                 all_preds[task.name] = preds
