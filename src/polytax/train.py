@@ -315,27 +315,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return None, None, None, accuracy.item()
 
     def _log_train(self, x, x_hat):
-        if xla_found:
-            def metsumm(stepno=''):
-                import torch_xla.debug.metrics as met
-                x = met.metrics_report().split('\n')
-                for i, line in enumerate(x):
-                    if 'CompileTime' in line or 'aten::' in line:
-                        key = line.split()[-1]
-                        value = x[i + 1].split()[-1]
-                        print(
-                            'step {}, key {}, value {}'.format(
-                                stepno, key, value
-                            )
-                        )
-
-            metsumm(stepno=self.step)
-
-        if xla_found:
-            import torch_xla.debug.metrics as met
-
-            xm.master_print(met.metrics_report())
-
         loss = x_hat.loss.item()
         try:
             aux_loss = x_hat.aux_loss.item()
@@ -511,7 +490,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 
     def finish(self):
-        if self.IS_MASTER_ORDINAL:
+        if self.IS_GLOBAL_MASTER:
             wandb.finish()
         xm.rendezvous("finished run.")
 
@@ -600,7 +579,6 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         for future, job in self.jobs:
             job.clean_up()
             print(f"{job.tpu} is now available")
-            breakpoint()
             print(f"exited {self.wandb_run_url}")
         sys.exit(0)
 
