@@ -22,5 +22,5 @@ model_config:
   cache_dir: "/tmp/"
   vocab_size: 32003
   capacity_factor: 1.0
-  n_experts: 96 # 8 * 12
+  n_experts: 6
   num_timesteps: 12

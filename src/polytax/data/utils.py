@@ -1,14 +1,6 @@
-import t5
-import t5.data.mixtures  # pylint: disable=unused-import
 import seqio
-import itertools
-from typing import Iterator, Dict
-import torch
+from typing import Iterator
 import tensorflow as tf
-from torch.utils.data import DataLoader
-from tensorflow.python.data.ops.dataset_ops import ParallelMapDataset
-from torch.utils.data import SequentialSampler, BatchSampler
-
 from polytax.data import dataset, listops, tasks  # pylint: disable=unused-import
 from polytax.data.dataset import IterableDataset, MapDataset
 

@@ -521,7 +521,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-2"
+    WANDB_PROJECT = "polytax-exps-4"
 
     def __init__(self):
         super(Nanny, self).__init__()
@@ -538,7 +538,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             wandb.finish()
         return wandb_run_id
 
-    async def run(self):
+    async def run(self, resume=False):
         if self.get("use_tpu"):
             manager = TPUManager(**self.get("tpu/kwargs"))
             tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
@@ -558,7 +558,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                                                misc_attributes={"wandb_run_id": self.setup_wandb()})
         if self.get("use_tpu"):
             for job, tpu in zip(jobs, tpus):
-                job.arm(train_state, restart=False)
+                job.arm(train_state, resume=resume)
                 try:
                     future = job.submit()
                 except Exception as e:
@@ -580,15 +580,12 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                         job.errbuffer.seek(0)
                         job.errbuffer.truncate()
 
-                    # if job.failed:
-                    #     state = "failed"
-                    # if job.died:
-                    #     state = "died"
                 await asyncio.sleep(1)
             for future, job in self.jobs:
                 print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
                 job.clean_up()
-                # self.launch(job.trainer, train_state)
+                # check if done
+                self.run(resume=True)
 
         else:
             trainer = Trainer(self)
