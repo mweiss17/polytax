@@ -439,17 +439,15 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self._build(train_state)
         if self.get("run_training"):
             print("Training...")
-            while True:
+            while self.get("num_train_steps") >= self.step:
                 for i, x in enumerate(self.train_loader):
-
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")
                         self.evaluate()
-                print(f"self.step: {self.step}, self.get('num_train_steps'): {self.get('num_train_steps')}")
-                if  self.step >= self.get("num_train_steps"):
-                    print("Done Training")
-                    break
+                    print(f"self.step: {self.step}, self.get('num_train_steps'): {self.get('num_train_steps')}")
+                    if self.step >= self.get("num_train_steps"):
+                        break
 
         if xla_found:
             self.finish()
@@ -535,6 +533,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         wandb_run_id = ""
         if self.get("use_wandb"):
             self.initialize_wandb(resume=False)
+            self.wandb_run_url = wandb.run.url
             wandb_run_id = self.wandb_run.id
             wandb.finish()
         return wandb_run_id
@@ -602,7 +601,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             job.clean_up()
             print(f"{job.tpu} is now available")
             breakpoint()
-            print(f"exited {job.trainer.wandb_run.get_url()}")
+            print(f"exited {self.wandb_run_url}")
         sys.exit(0)
 
 
