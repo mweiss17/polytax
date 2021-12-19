@@ -27,6 +27,7 @@ import signal
 import wandb
 import asyncio
 import traceback
+import models.model as model
 import seqio
 import numpy as np
 import tensorflow as tf
@@ -83,82 +84,6 @@ from data.utils import build_dataset, build_seqio_dataset
 from data import listops
 from data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
-global vocab_npa
-global embs_npa
-
-with open('vocab_npa.npy', 'rb') as f:
-    vocab_npa = np.load(f)
-
-with open('embs_npa.npy', 'rb') as f:
-    embs_npa = np.load(f)
-
-class RNNModel(torch.nn.Module):
-    """Container module with an encoder, a recurrent module, and a decoder."""
-
-    def __init__(self):
-        super(RNNModel, self).__init__()
-        # input_seq_len: 32
-        # target_seq_len: 8
-        # batch_size: 4 #per device
-        self.embedding = torch.nn.Embedding(
-            num_embeddings=32100,
-            embedding_dim=8)
-        self.lstm = torch.nn.LSTM(8, 8, batch_first = True)
-
-        self.second_decoder = torch.nn.Linear(8, 32100)
-        self.first_decoder = torch.nn.Linear(128, 8)
-        self.softmax = torch.nn.Softmax(dim=-1)
-        self.act = torch.nn.Softplus(beta = 1, threshold = 20)
-        self.init_weights()
-
-    def init_weights(self):
-        torch.nn.init.xavier_normal_(self.embedding.weight, gain=1.0)
-        torch.nn.init.xavier_normal_(self.first_decoder.weight, gain=1.0)
-        torch.nn.init.xavier_normal_(self.second_decoder.weight, gain=1.0)
-        self.first_decoder.bias.data.zero_()
-        self.second_decoder.bias.data.zero_()
-
-    def init_hidden_states(self):
-        hidden1 = torch.zeros(1, 4, 8)
-        hidden2 = torch.zeros(1, 4, 8)
-        torch.nn.init.xavier_normal_(hidden1, gain=1.0)
-        torch.nn.init.xavier_normal_(hidden2, gain=1.0)
-        self.hidden = (hidden1,
-          hidden2)
-
-    def forward(self, input_ids, hidden = None, **kwargs):
-        # TO DO: USE HIDDEN
-        self.init_hidden_states()
-        embed = self.embedding(input_ids)
-        out, hidden = self.lstm(embed, self.hidden)
-
-        #l1 = torch.nn.Linear(128, 32)
-        #breakpoint()
-        decoder_out = torch.einsum("bst, td -> btd", out, self.first_decoder.weight)
-        decoder_out_2 = torch.einsum("bsd, ms -> bms", decoder_out, self.second_decoder.weight)
-        lstm_out = self.act(decoder_out_2)
-        final_output = self.softmax(lstm_out)
-        # s = 8
-        # d = 128 
-
-        # ds = 128, 8
-
-        # bst, td -> btd
-        
-        # b = 4
-        # s = 32
-        # t = 8
-        # bst, bst->sd, bsd
-        # decoder_out = self.first_decoder(out.view(-1, 8).T)
-
-
-        # mod_out = decoder_out.view(4,8,8)
-        # final_decoder_out = self.second_decoder(mod_out)
-        # lstm_out = self.act(final_decoder_out)
-        # final_output = self.softmax(lstm_out)
-        # # True: 4, 32, 32100
-        # # Expected: 4, 8, 32100
-        return final_output.view(4,8,32100), hidden
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
@@ -256,7 +181,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_train_tasks(self):
         mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
-        tf_dataset, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
+        _, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
         self.train_loader = self._build_loader(dataset, cycle=True)
 
     def _build_eval_tasks(self):
@@ -289,10 +214,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
         elif "lstm" in self.get("model_config/model_type"):
-            # TO DO: Improve config
-            self.model = RNNModel()
+            input_seq_len = self.get("input_seq_len")
+            target_seq_len = self.get("target_seq_len")
+            batch_size = self.get("batch_size")
+            vocab_total_size = self.get("vocab_total_size")
+            self.model = model.RNNModel(input_seq_len, target_seq_len, batch_size, vocab_total_size)
         else:
-            self.model = RNNModel()
+            model_config = T5Config.from_dict(self.get("model_config"))
+            self.model = T5ForConditionalGeneration(model_config)
         train_state.load_in_model(self.model)
         self.model.to(self.device)
 
@@ -464,7 +393,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def loss(self, logits, labels):
         loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-        print(">>> LOSS RETURNED", loss)
         return loss
 
     def step_gradients(self):
@@ -518,14 +446,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        #print("X input ids shape", x['input_ids'].shape)
         x_hat, _ = self.model(**x)
         loss = self.loss(x_hat, x["labels"])
-        #print(">>>> Loss for LSTM is", loss)
         loss.backward()
-        # for name, param in self.model.named_parameters():
-        #     if param.requires_grad:
-        #         print(name, param.data)
         self.step_gradients()
         if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
