@@ -382,7 +382,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     metric_results[tag] = metric_value
             metric_results[f"eval/{task.name}/text_preds"] = text_preds[:10]
             metric_results[f"eval/{task.name}/text_targets"] = text_targets[:10]
-
+        print(f"in log after: {met.metrics_report()}")
 
         results["eval_accuracy"] = metric_results
         xm.master_print(results)
@@ -462,6 +462,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def evaluate(self):
         self.model.eval()
+        if xla_found:
+            print(f"before: {met.metrics_report()}")
+
         with torch.no_grad():
             all_examples = {}
             all_preds = {}
@@ -482,8 +485,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     preds.append(out)
                 all_examples[task.name] = examples
                 all_preds[task.name] = preds
+
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
+                print(f"after: {met.metrics_report()}")
                 xm.add_step_closure(
                     self._log_eval, args=(all_preds, all_examples), run_async=True
                 )
