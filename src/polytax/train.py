@@ -401,7 +401,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             text_preds = []
             targets = []
             text_targets = []
-            for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
+            for _, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
                 preds = preds.cpu().tolist()
                 for j, pred in enumerate(preds):
                     target = examples['labels'][j].tolist()
@@ -535,7 +535,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     examples.append(x.copy())
                     del x["labels"]
                     outputs = self.model(**x)
-                    out = outputs.logits.argmax(2)
+                    if "lstm" in self.get("model_config/model_type"):
+                        out = outputs.argmax(2)
+                    else:
+                        out = outputs.logits.argmax(2)
                     preds.append(out)
                 all_examples[task.name] = examples
                 all_preds[task.name] = preds
