@@ -24,6 +24,7 @@ import os
 import io
 import sys
 import signal
+from torch.nn.modules import rnn
 import wandb
 import asyncio
 import traceback
@@ -284,10 +285,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
             torch.save(buffer, path)
 
-    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False):
+    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False, is_rnn = False):
         sample_id = 0
         all_labels = x['labels']
-        all_preds = x_hat.logits.argmax(axis=2)
+        if is_rnn is False:
+            all_preds = x_hat.logits.argmax(axis=2)
+        else:
+            all_preds = x_hat.argmax(axis=2)
         all_inputs = x["input_ids"]
 
         input_list = all_inputs[sample_id].cpu().numpy().tolist()
@@ -320,7 +324,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             return input, label, pred, accuracy.item()
         return None, None, None, accuracy.item()
 
-    def _log_train(self, x, x_hat):
+    def _log_train(self, x, x_hat, rnn_loss = None):
         if xla_found:
             def metsumm(stepno=''):
                 import torch_xla.debug.metrics as met
@@ -341,14 +345,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             import torch_xla.debug.metrics as met
 
             xm.master_print(met.metrics_report())
+        is_rnn = False
+        try:
+            loss = x_hat.loss.item()
+        except AttributeError:
+            is_rnn = True
+            if rnn_loss is not None:
+                loss = rnn_loss
+            else:
+                loss = 0.0
 
-        loss = x_hat.loss.item()
         try:
             aux_loss = x_hat.aux_loss.item()
         except AttributeError:
             aux_loss = 0.0
         # Get a text example and log it
-        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
+        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, False, is_rnn)
         results = {
             "step": self.step,
             "label": label,
@@ -469,10 +481,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
+        rnn_loss = 0.0
         if "lstm" in self.get("model_config/model_type"):
             x_hat, _ = self.model(**x)
             loss = self.loss(x_hat, x["labels"])
             loss.backward()
+            rnn_loss = loss
         else:
             x_hat = self.model(**x)
             x_hat.loss.backward()
@@ -484,10 +498,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                 xm.add_step_closure(
                     self._log_train, args=(x, x_hat), run_async=True
                 )
+            elif xla_found and "lstm" in self.get("model_config/model_type"):
+                xm.add_step_closure(
+                    self._log_train, args=(x, x_hat, rnn_loss), run_async=True
+                )
             # Otherwise just call the function to log directly
             else:
                 if "lstm" not in self.get("model_config/model_type"):
                     self._log_train(x, x_hat)
+                else:
+                    self._log_train(x, x_hat, rnn_loss)
 
         if self.checkpoint_now:
             self.checkpoint()
@@ -498,7 +518,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             xm.mark_step()
 
     def evaluate(self):
-        print(">>>> THIS SHOULD NOT PRINT")
         self.model.eval()
         with torch.no_grad():
             all_examples = {}
