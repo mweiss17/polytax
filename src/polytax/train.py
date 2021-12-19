@@ -420,13 +420,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print("Training...")
             while self.get("num_train_steps") >= self.step:
                 for i, x in enumerate(self.train_loader):
+                    if self.step >= self.get("num_train_steps"):
+                        break
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")
                         self.evaluate()
-                    print(f"self.step: {self.step}, self.get('num_train_steps'): {self.get('num_train_steps')}")
-                    if self.step >= self.get("num_train_steps"):
-                        break
+
 
         if xla_found:
             self.finish()
@@ -499,7 +499,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-4"
+    WANDB_PROJECT = "polytax-exps-5"
 
     def __init__(self):
         super(Nanny, self).__init__()
@@ -517,7 +517,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             wandb.finish()
         return wandb_run_id
 
-    async def run(self, resume=False):
+    async def run(self, resume):
         if self.get("use_tpu"):
             manager = TPUManager(**self.get("tpu/kwargs"))
             tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
@@ -597,4 +597,4 @@ if __name__ == "__main__":
 
         JobRunner(args.bucket, args.path).run()
     else:
-        asyncio.run(Nanny().run())
+        asyncio.run(Nanny().run(resume=True))
