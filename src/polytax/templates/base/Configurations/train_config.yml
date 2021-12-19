@@ -63,7 +63,7 @@ model_config:
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
-  model_type: "t5"
+  model_type: "lstm"
   num_decoder_layers: 12
   num_heads: 12
   num_layers: 12

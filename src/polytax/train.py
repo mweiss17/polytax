@@ -83,42 +83,82 @@ from data.utils import build_dataset, build_seqio_dataset
 from data import listops
 from data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
+global vocab_npa
+global embs_npa
+
+with open('vocab_npa.npy', 'rb') as f:
+    vocab_npa = np.load(f)
+
+with open('embs_npa.npy', 'rb') as f:
+    embs_npa = np.load(f)
 
 class RNNModel(torch.nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
     def __init__(self):
         super(RNNModel, self).__init__()
+        # input_seq_len: 32
+        # target_seq_len: 8
+        # batch_size: 4 #per device
         self.embedding = torch.nn.Embedding(
-            num_embeddings=320000,
-            embedding_dim=20)
-        self.lstm = torch.nn.LSTM(20, 20)
-        self.hidden1 = torch.randn(1, 16, 20)
-        self.hidden2 = torch.randn(1, 16, 20)
-        
-        self.hidden = (self.hidden1,
-          self.hidden2)
+            num_embeddings=32100,
+            embedding_dim=8)
+        self.lstm = torch.nn.LSTM(8, 8, batch_first = True)
 
-        self.decoder = torch.nn.Linear(128, 320000)
+        self.second_decoder = torch.nn.Linear(8, 32100)
+        self.first_decoder = torch.nn.Linear(128, 8)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.act = torch.nn.Softplus(beta = 1, threshold = 20)
         self.init_weights()
 
     def init_weights(self):
-        initrange = 0.1
-        self.embedding.weight.data.uniform_(-initrange, initrange)
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(-initrange, initrange)
+        torch.nn.init.xavier_normal_(self.embedding.weight, gain=1.0)
+        torch.nn.init.xavier_normal_(self.first_decoder.weight, gain=1.0)
+        torch.nn.init.xavier_normal_(self.second_decoder.weight, gain=1.0)
+        self.first_decoder.bias.data.zero_()
+        self.second_decoder.bias.data.zero_()
 
-    def forward(self, input, hidden = None):
+    def init_hidden_states(self):
+        hidden1 = torch.zeros(1, 4, 8)
+        hidden2 = torch.zeros(1, 4, 8)
+        torch.nn.init.xavier_normal_(hidden1, gain=1.0)
+        torch.nn.init.xavier_normal_(hidden2, gain=1.0)
+        self.hidden = (hidden1,
+          hidden2)
+
+    def forward(self, input_ids, hidden = None, **kwargs):
         # TO DO: USE HIDDEN
-        embed= self.embedding(input)
-        out, hidden = self.lstm(embed)
-        out=out.reshape(16,20,128)
-        output = self.decoder(out)
-        lstm_out = self.act(output)
+        self.init_hidden_states()
+        embed = self.embedding(input_ids)
+        out, hidden = self.lstm(embed, self.hidden)
+
+        #l1 = torch.nn.Linear(128, 32)
+        #breakpoint()
+        decoder_out = torch.einsum("bst, td -> btd", out, self.first_decoder.weight)
+        decoder_out_2 = torch.einsum("bsd, ms -> bms", decoder_out, self.second_decoder.weight)
+        lstm_out = self.act(decoder_out_2)
         final_output = self.softmax(lstm_out)
-        return final_output, hidden
+        # s = 8
+        # d = 128 
+
+        # ds = 128, 8
+
+        # bst, td -> btd
+        
+        # b = 4
+        # s = 32
+        # t = 8
+        # bst, bst->sd, bsd
+        # decoder_out = self.first_decoder(out.view(-1, 8).T)
+
+
+        # mod_out = decoder_out.view(4,8,8)
+        # final_decoder_out = self.second_decoder(mod_out)
+        # lstm_out = self.act(final_decoder_out)
+        # final_output = self.softmax(lstm_out)
+        # # True: 4, 32, 32100
+        # # Expected: 4, 8, 32100
+        return final_output.view(4,8,32100), hidden
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
@@ -478,16 +518,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        print("X input ids shape", x['input_ids'].shape)
-        x_hat, _ = self.model(x['input_ids'])
-        print("x_hat type", type(x_hat))
-        print("X_hat returned is", x_hat.shape)
+        #print("X input ids shape", x['input_ids'].shape)
+        x_hat, _ = self.model(**x)
         loss = self.loss(x_hat, x["labels"])
-        print(">>>> Loss for LSTM is", loss)
+        #print(">>>> Loss for LSTM is", loss)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
-        for p in self.model.parameters():
-            p.data.add_(1, p.grad.data)
+        # for name, param in self.model.named_parameters():
+        #     if param.requires_grad:
+        #         print(name, param.data)
         self.step_gradients()
         if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
