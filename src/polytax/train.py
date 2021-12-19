@@ -57,7 +57,7 @@ from transformers import (
     MustConfig,
     set_seed,
 )
-from data.dataset import IterableDataset
+from polytax.data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
 from t5.data.utils import get_default_vocabulary
@@ -81,9 +81,9 @@ except Exception as e:
     xla_found = False
     from utils.tracker import RateTracker, print_training_update, print_test_update
 
-from data.utils import build_dataset, build_seqio_dataset
-from data import listops
-from data.dataset import ListOpsDataset
+from polytax.data.utils import build_dataset, build_seqio_dataset
+from polytax.data import listops
+from polytax.data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
