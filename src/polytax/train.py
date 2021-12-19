@@ -430,7 +430,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         if xla_found:
             self.finish()
-        return train_state
+        return self.train_state
 
     def train(self, x):
         self.model.train()
