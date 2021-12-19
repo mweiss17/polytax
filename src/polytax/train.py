@@ -387,8 +387,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         results["eval_accuracy"] = metric_results
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
-        else:
-            print(results, flush=True)
+            print_training_update(self.device, self.step, -1., self.tracker.rate(), self.tracker.global_rate())
+        elif xla_found and self.IS_GLOBAL_MASTER:
+            xm.master_print(results)
+            # self.bucket.touch(self.experiment_directory + "/heartbeat")
+            print_training_update(self.device, self.step, -1., self.tracker.rate(), self.tracker.global_rate())
+        elif not xla_found:
+            print(results)
+            print_training_update(self.device, self.step, -1., self.tracker.rate(), self.tracker.global_rate())
 
     def step_gradients(self):
         if xla_found and self.IS_MULTI_HOST:
@@ -424,7 +430,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         break
                     self.train(x)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
-                        print("Evaluating...")
+                        if xla_found:
+                            xm.rendezvous("evaluation")
+                            xm.master_print("Evaluating...")
                         self.evaluate()
 
 
@@ -499,7 +507,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-5"
+    WANDB_PROJECT = "polytax-exps-6"
 
     def __init__(self):
         super(Nanny, self).__init__()
