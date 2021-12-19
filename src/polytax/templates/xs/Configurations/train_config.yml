@@ -14,20 +14,8 @@ split: "train"
 input_seq_len: 32
 target_seq_len: 8
 batch_size: 4 #per device
-vocab_total_size: 32100
 use_iterable_ds: True
 
-
-# Optimizer
-optim:
-  name: "Adafactor"
-  kwargs:
-    clip_threshold: 1.0
-    decay_rate: -0.8
-    weight_decay: 0.0
-    relative_step: True
-    scale_parameter: True
-    warmup_init: True
 
 
 # Steps

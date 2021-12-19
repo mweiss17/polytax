@@ -24,7 +24,6 @@ import os
 import io
 import sys
 import signal
-from torch.nn.modules import rnn
 import wandb
 import asyncio
 import traceback
@@ -60,6 +59,7 @@ from transformers import (
 from polytax.data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
+from torch.optim import Adam
 from t5.data.utils import get_default_vocabulary
 
 global xla_found
@@ -215,11 +215,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
         elif "lstm" in self.get("model_config/model_type"):
-            input_seq_len = self.get("input_seq_len")
-            target_seq_len = self.get("target_seq_len")
-            batch_size = self.get("batch_size")
-            vocab_total_size = self.get("vocab_total_size")
-            self.model = model.RNNModel(input_seq_len, target_seq_len, batch_size, vocab_total_size)
+            self.model = model.RNNModel(self.get("input_seq_len"), self.get("target_seq_len"), tokenizer=self.tokenizer)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
@@ -285,13 +281,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             path = f"{self.experiment_directory}/Weights/trainstate-{self.step}.pt"
             torch.save(buffer, path)
 
-    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False, is_rnn = False):
+    def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False):
         sample_id = 0
         all_labels = x['labels']
-        if is_rnn is False:
-            all_preds = x_hat.logits.argmax(axis=2)
-        else:
-            all_preds = x_hat.argmax(axis=2)
+        all_preds = x_hat.logits.argmax(axis=2)
         all_inputs = x["input_ids"]
 
         input_list = all_inputs[sample_id].cpu().numpy().tolist()
@@ -324,43 +317,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             return input, label, pred, accuracy.item()
         return None, None, None, accuracy.item()
 
-    def _log_train(self, x, x_hat, rnn_loss = None):
-        if xla_found:
-            def metsumm(stepno=''):
-                import torch_xla.debug.metrics as met
-                x = met.metrics_report().split('\n')
-                for i, line in enumerate(x):
-                    if 'CompileTime' in line or 'aten::' in line:
-                        key = line.split()[-1]
-                        value = x[i + 1].split()[-1]
-                        print(
-                            'step {}, key {}, value {}'.format(
-                                stepno, key, value
-                            )
-                        )
-
-            metsumm(stepno=self.step)
-
-        if xla_found:
-            import torch_xla.debug.metrics as met
-
-            xm.master_print(met.metrics_report())
-        is_rnn = False
-        try:
-            loss = x_hat.loss.item()
-        except AttributeError:
-            is_rnn = True
-            if rnn_loss is not None:
-                loss = rnn_loss
-            else:
-                loss = 0.0
+    def _log_train(self, x, x_hat):
+        loss = x_hat.loss.item()
 
         try:
             aux_loss = x_hat.aux_loss.item()
         except AttributeError:
             aux_loss = 0.0
+
         # Get a text example and log it
-        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, False, is_rnn)
+        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, compute_examples=False)
         results = {
             "step": self.step,
             "label": label,
@@ -472,42 +438,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.finish()
         return train_state
 
-    # Used only for RNN models, implicit loss used for HF models
-    def loss(self, logits, labels):
-        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
-        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-        return loss
-
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        rnn_loss = 0.0
-        if "lstm" in self.get("model_config/model_type"):
-            x_hat, _ = self.model(**x)
-            loss = self.loss(x_hat, x["labels"])
-            loss.backward()
-            rnn_loss = loss
-        else:
-            x_hat = self.model(**x)
-            x_hat.loss.backward()
+        x_hat = self.model(**x)
+        x_hat.loss.backward()
 
         self.step_gradients()
         if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
-            if xla_found and "lstm" not in self.get("model_config/model_type"):
+            if xla_found:
                 xm.add_step_closure(
                     self._log_train, args=(x, x_hat), run_async=True
                 )
-            elif xla_found and "lstm" in self.get("model_config/model_type"):
-                xm.add_step_closure(
-                    self._log_train, args=(x, x_hat, rnn_loss), run_async=True
-                )
             # Otherwise just call the function to log directly
             else:
-                if "lstm" not in self.get("model_config/model_type"):
-                    self._log_train(x, x_hat)
-                else:
-                    self._log_train(x, x_hat, rnn_loss)
+                self._log_train(x, x_hat)
 
         if self.checkpoint_now:
             self.checkpoint()
@@ -535,10 +481,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     examples.append(x.copy())
                     del x["labels"]
                     outputs = self.model(**x)
-                    if "lstm" in self.get("model_config/model_type"):
-                        out = outputs.argmax(2)
-                    else:
-                        out = outputs.logits.argmax(2)
+                    out = outputs.logits.argmax(2)
                     preds.append(out)
                 all_examples[task.name] = examples
                 all_preds[task.name] = preds

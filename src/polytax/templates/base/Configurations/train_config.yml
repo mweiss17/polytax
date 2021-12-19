@@ -25,18 +25,6 @@ use_iterable_ds: True
 #    batch_size: 4
 #    use_iterable_ds: True
 
-# Optimizer
-optim:
-  name: "Adafactor"
-  kwargs:
-    clip_threshold: 1.0
-    decay_rate: -0.8
-    weight_decay: 0.0
-    relative_step: True
-    scale_parameter: True
-    warmup_init: True
-
-
 # Steps
 training:
   checkpoint_every: 1000
