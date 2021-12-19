@@ -365,7 +365,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
                 preds = preds.cpu().tolist()
                 for j, pred in enumerate(preds):
-                    target = examples['labels'][j].tolist()
+                    target = examples['labels'][j].cpu().tolist()
                     text_target = self.tokenizer.decode(target)
                     text_pred = self.tokenizer.decode(pred)
                     text_preds.append(text_pred)
@@ -385,16 +385,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 
         results["eval_accuracy"] = metric_results
+        xm.master_print(results)
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
-            print_training_update(self.device, self.step, -1., self.tracker.rate(), self.tracker.global_rate())
-        elif xla_found and self.IS_GLOBAL_MASTER:
-            xm.master_print(results)
-            # self.bucket.touch(self.experiment_directory + "/heartbeat")
-            print_training_update(self.device, self.step, -1., self.tracker.rate(), self.tracker.global_rate())
         elif not xla_found:
             print(results)
-            print_training_update(self.device, self.step, -1., self.tracker.rate(), self.tracker.global_rate())
 
     def step_gradients(self):
         if xla_found and self.IS_MULTI_HOST:
