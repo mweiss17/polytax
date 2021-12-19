@@ -446,7 +446,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         print("Evaluating...")
                         self.evaluate()
-                if self.get("num_train_steps") == self.step:
+                print(f"self.step: {self.step}, self.get('num_train_steps'): {self.get('num_train_steps')}")
+                if  self.step >= self.get("num_train_steps"):
                     print("Done Training")
                     break
 
@@ -600,7 +601,8 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
         for future, job in self.jobs:
             job.clean_up()
             print(f"{job.tpu} is now available")
-            print(f"exited {job.wandb_run.get_url()}")
+            breakpoint()
+            print(f"exited {job.trainer.wandb_run.get_url()}")
         sys.exit(0)
 
 
