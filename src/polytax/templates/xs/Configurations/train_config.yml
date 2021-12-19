@@ -35,9 +35,9 @@ training:
 
 # Steps
 wandb:
-  log_scalars_every: 1 #20
+  log_scalars_every: 20
 eval_every: 1000
-num_train_steps: 1000000
+num_train_steps: 10000
 
 # Logging
 use_wandb: True
@@ -80,7 +80,7 @@ tpu:
 job:
   kwargs:
     env_stmts: ["export XRT_TPU_CONFIG='localservice;0;localhost:51011';", "export PATH=$PATH:/home/$USER/.local/bin;", "unset LD_PRELOAD;"]
-    setup_cmds: ["cd ~/polytax/ && git pull origin master","pip install git+https://git@github.com/mweiss17/wormulon@main#egg=wormulon --upgrade", "pip uninstall -y transformers", "pip install git+https://github.com/Arka161/transformers@master#egg=transformers", "cd ~/polytax/ && pip install -e .[xla]"]
+    setup_cmds: ["cd ~/polytax/ && git pull origin master", "pip uninstall -ys wormulon", "pip install git+https://git@github.com/mweiss17/wormulon@main#egg=wormulon", "pip uninstall -y transformers", "pip install git+https://github.com/Arka161/transformers@master#egg=transformers", "cd ~/polytax/ && pip install -e .[xla]"]
     install_cmd: "cd ~/; git clone https://github.com/mweiss17/polytax.git; pip uninstall -y wormulon; pip install -e polytax[xla];"
     train_cmd: "python3 ~/polytax/src/polytax/train.py" #XLA_USE_BF16=1 PT_XLA_DEBUG=1
     cleanup_cmd: "pkill -9 python3"

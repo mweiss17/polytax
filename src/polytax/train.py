@@ -343,7 +343,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
         elif xla_found and self.IS_GLOBAL_MASTER:
             xm.master_print(results)
-            self.bucket.touch(self.experiment_directory + "/heartbeat")
+            # self.bucket.touch(self.experiment_directory + "/heartbeat")
             print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
         elif not xla_found:
             print(results)
