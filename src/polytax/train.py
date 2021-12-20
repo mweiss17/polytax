@@ -460,8 +460,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def evaluate(self):
         self.model.eval()
-        if xla_found:
-            xm.master_print(f"before: {met.metrics_report()}")
 
         with torch.no_grad():
             all_examples = {}
@@ -469,7 +467,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             for task, (ds, loader) in self.eval_datasets.items():
                 examples = []
                 preds = []
-                i = 0
                 while True:
                     try:
                         x = next(loader)
@@ -477,8 +474,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         rebuilt_ds = IterableDataset(ds.as_numpy_iterator(), self.device)
                         self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds))
                         break
-                    i+=1
-                    xm.master_print(f"evaluating {i}")
                     examples.append(x.copy())
                     del x["labels"]
                     outputs = self.model(**x)
@@ -489,7 +484,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
-                print(f"after: {met.metrics_report()}")
                 xm.add_step_closure(
                     self._log_eval, args=(all_preds, all_examples), run_async=True
                 )
