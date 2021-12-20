@@ -207,6 +207,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         model_config["NUM_SHARDS"] = self.NUM_SHARDS
         model_config["xla_found"] = xla_found
         model_config["seed"] = self.get("seed")
+        model_config["input_seq_len"] = self.get("input_seq_len")
         if "switch" in self.get("model_config/model_type"):
             model_config = SwitchConfig.from_dict(model_config)
             self.model = SwitchForConditionalGeneration(model_config)
@@ -338,12 +339,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "global it/s": self.tracker.global_rate(),
         }
         # Return if we don't have wandb
-        xm.master_print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()})
+        if xla_found:
+            xm.master_print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()})
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
-        elif xla_found and self.IS_GLOBAL_MASTER:
-            xm.master_print(results)
-            # self.bucket.touch(self.experiment_directory + "/heartbeat")
         elif not xla_found:
             print(results)
 
@@ -382,7 +381,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             metric_results[f"eval/{task.name}/text_targets"] = text_targets[:10]
 
         results["eval_accuracy"] = metric_results
-        xm.master_print(results)
+        if xla_found:
+            xm.master_print(results)
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
         elif not xla_found:

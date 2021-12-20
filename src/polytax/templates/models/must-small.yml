@@ -23,4 +23,4 @@ model_config:
   vocab_size: 32003
   capacity_factor: 1.0
   n_experts: 6
-  num_timesteps: 12
+  num_timesteps: 6
