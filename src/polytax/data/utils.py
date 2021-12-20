@@ -19,12 +19,12 @@ def build_seqio_dataset(task, sequence_length, split, seed=1, pack=False):
     )
     return dataset
 
-def build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, use_iterable_ds=True, device=None) -> Iterator:
+def build_dataset(dataset, batch_size, GLOBAL_RANK, NUM_SHARDS, use_iterable_ds=True, device=None, drop_remainder=False) -> Iterator:
     """Builds an iterable dataset."""
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=GLOBAL_RANK)
     print("building dataset.")
     if use_iterable_ds:
-        tf_dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        tf_dataset = dataset.batch(batch_size, drop_remainder=drop_remainder).prefetch(tf.data.AUTOTUNE)
         dataset = IterableDataset(tf_dataset.as_numpy_iterator(), device)
     else:
         dataset = dataset.prefetch(tf.data.AUTOTUNE).as_numpy_iterator()

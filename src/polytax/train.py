@@ -168,8 +168,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         }
         return seq_len
 
-    def _build_loader(self, dataset, cycle=False, drop_last=False):
-        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0, drop_last=drop_last)
+    def _build_loader(self, dataset, cycle=False):
+        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0)
         if xla_found:
             loader = pl.MpDeviceLoader(loader, self.device)
         if cycle:
@@ -191,8 +191,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.eval_datasets = {}
         for task in eval_tasks:
             ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
-            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True, device=self.device)
-            self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False, drop_last=True))
+            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True, device=self.device, drop_remainder=True)
+            self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False))
 
     def _build_model(self, train_state: "TrainState"):
         self.get("model_config")["layer_norm_epsilon"] = float(
@@ -469,14 +469,16 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             for task, (ds, loader) in self.eval_datasets.items():
                 examples = []
                 preds = []
+                i = 0
                 while True:
                     try:
                         x = next(loader)
                     except StopIteration:
                         rebuilt_ds = IterableDataset(ds.as_numpy_iterator(), self.device)
-                        self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds, cycle=False, drop_last=True))
+                        self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds))
                         break
-                    xm.master_print(f"evaluating {task}")
+                    i+=1
+                    xm.master_print(f"evaluating {i}")
                     examples.append(x.copy())
                     del x["labels"]
                     outputs = self.model(**x)
