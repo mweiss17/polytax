@@ -12,7 +12,7 @@ model_config:
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
-  model_type: "must-xs"
+  model_type: "N-must-xs"
   num_decoder_layers: 1
   num_heads: 2
   num_layers: 1
@@ -23,5 +23,5 @@ model_config:
   cache_dir: "/tmp/"
   vocab_size: 32003
   capacity_factor: 1.0
-  n_experts: 4
-  num_timesteps: 2
+  n_experts: 1
+  num_timesteps: 1

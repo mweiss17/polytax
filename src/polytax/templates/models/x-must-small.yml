@@ -11,7 +11,7 @@ model_config:
   initializer_factor: 1.0
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
-  model_type: "must-small"
+  model_type: "X-must-small"
   num_decoder_layers: 1
   num_heads: 8
   num_layers: 1
