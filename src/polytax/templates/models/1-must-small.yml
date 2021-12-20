@@ -24,3 +24,15 @@ model_config:
   capacity_factor: 1.0
   n_experts: 6
   num_timesteps: 6
+
+# Optimizer
+optim:
+  name: "Adafactor"
+  kwargs:
+    clip_threshold: 1.0
+    decay_rate: -0.8
+    weight_decay: 0.0
+    relative_step: True
+    scale_parameter: True
+    warmup_init: True
+>>>>>>> afde3c78e6111952cbd64a1bf49f6514553becd8:src/polytax/templates/models/must-small.yml

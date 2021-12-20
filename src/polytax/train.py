@@ -27,6 +27,7 @@ import signal
 import wandb
 import asyncio
 import traceback
+import models.model as model
 import seqio
 import numpy as np
 import tensorflow as tf
@@ -58,6 +59,7 @@ from transformers import (
 from polytax.data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
+from torch.optim import Adam
 from t5.data.utils import get_default_vocabulary
 
 global xla_found
@@ -83,7 +85,6 @@ from polytax.data.utils import build_dataset, build_seqio_dataset
 from polytax.data import listops
 from polytax.data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
-
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
@@ -181,7 +182,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_train_tasks(self):
         mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
-        tf_dataset, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
+        _, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
         self.train_loader = self._build_loader(dataset, cycle=True)
 
     def _build_eval_tasks(self):
@@ -214,6 +215,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         elif "must" in self.get("model_config/model_type"):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
+        elif "lstm" in self.get("model_config/model_type"):
+            self.model = model.RNNModel(self.get("input_seq_len"), self.get("target_seq_len"), tokenizer=self.tokenizer)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
@@ -317,12 +320,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _log_train(self, x, x_hat):
         loss = x_hat.loss.item()
+
         try:
             aux_loss = x_hat.aux_loss.item()
         except AttributeError:
             aux_loss = 0.0
+
         # Get a text example and log it
-        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat)
+        input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, compute_examples=False)
         results = {
             "step": self.step,
             "label": label,
@@ -359,7 +364,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             text_preds = []
             targets = []
             text_targets = []
-            for i, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
+            for _, (preds, examples) in enumerate(zip(all_preds[task.name], all_examples[task.name])):
                 preds = preds.cpu().tolist()
                 for j, pred in enumerate(preds):
                     target = examples['labels'][j].cpu().tolist()
