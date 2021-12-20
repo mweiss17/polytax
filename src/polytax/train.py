@@ -168,8 +168,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         }
         return seq_len
 
-    def _build_loader(self, dataset, cycle=False):
-        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0)
+    def _build_loader(self, dataset, cycle=False, drop_last=False):
+        loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0, drop_last=drop_last)
         if xla_found:
             loader = pl.MpDeviceLoader(loader, self.device)
         if cycle:
@@ -192,7 +192,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         for task in eval_tasks:
             ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
             tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True, device=self.device)
-            self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False))
+            self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False, drop_last=True))
 
     def _build_model(self, train_state: "TrainState"):
         self.get("model_config")["layer_norm_epsilon"] = float(
@@ -338,16 +338,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "global it/s": self.tracker.global_rate(),
         }
         # Return if we don't have wandb
+        xm.master_print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()})
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
-            print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
         elif xla_found and self.IS_GLOBAL_MASTER:
             xm.master_print(results)
             # self.bucket.touch(self.experiment_directory + "/heartbeat")
-            print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
         elif not xla_found:
             print(results)
-            print_training_update(self.device, self.step, loss, self.tracker.rate(), self.tracker.global_rate())
 
     def _log_eval(self, all_preds, all_examples):
         results = {
@@ -463,7 +461,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def evaluate(self):
         self.model.eval()
         if xla_found:
-            print(f"before: {met.metrics_report()}")
+            xm.master_print(f"before: {met.metrics_report()}")
 
         with torch.no_grad():
             all_examples = {}
@@ -476,8 +474,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                         x = next(loader)
                     except StopIteration:
                         rebuilt_ds = IterableDataset(ds.as_numpy_iterator(), self.device)
-                        self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds))
+                        self.eval_datasets[task] = (ds, self._build_loader(rebuilt_ds, cycle=False, drop_last=True))
                         break
+                    xm.master_print(f"evaluating {task}")
                     examples.append(x.copy())
                     del x["labels"]
                     outputs = self.model(**x)
