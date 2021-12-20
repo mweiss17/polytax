@@ -21,14 +21,3 @@ model_config:
   use_cache: false
   cache_dir: "/tmp/"
   vocab_size: 32003
-
-# Optimizer
-optim:
-  name: "Adafactor"
-  kwargs:
-    clip_threshold: 1.0
-    decay_rate: -0.8
-    weight_decay: 0.0
-    relative_step: True
-    scale_parameter: True
-    warmup_init: True
