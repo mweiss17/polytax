@@ -380,7 +380,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     metric_results[tag] = metric_value
             metric_results[f"eval/{task.name}/text_preds"] = text_preds[:10]
             metric_results[f"eval/{task.name}/text_targets"] = text_targets[:10]
-        print(f"in log after: {met.metrics_report()}")
 
         results["eval_accuracy"] = metric_results
         xm.master_print(results)
