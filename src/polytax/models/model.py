@@ -7,8 +7,8 @@ class RNNOutput(object):
     """
     This class is used to store the output of a RNN.
     """
-    loss: torch.Tensor
     logits: torch.Tensor
+    loss: torch.Tensor = 0.
     aux_loss: float = 0.
 
 class DecoderModel(torch.nn.Module):
@@ -85,13 +85,16 @@ class RNNModel(torch.nn.Module):
         torch.nn.init.xavier_normal_(cell_state, gain=1.0)
         self.hidden = (hidden_state, cell_state)
 
-    def forward(self, input_ids, labels, **kwargs):
+    def forward(self, input_ids, labels=None, **kwargs):
         batch_size = input_ids.shape[0]
         self.init_hidden_states(batch_size)
         embed = self.embedding(input_ids)
         out, _ = self.lstm(embed, self.hidden)
         output = self.decoder(out)
         output = output.view(batch_size, self.target_seq_len_, self.tokenizer.vocab_size)
-        loss = self.loss(output, labels)
-        rnn_output = RNNOutput(logits=output, loss=loss)
+        if labels is not None:
+            loss = self.loss(output, labels)
+            rnn_output = RNNOutput(logits=output, loss=loss)
+        else:
+            rnn_output = RNNOutput(logits=output)
         return rnn_output
