@@ -216,7 +216,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
         elif "lstm" in self.get("model_config/model_type"):
-            self.model = model.RNNModel(self.get("input_seq_len"), self.get("target_seq_len"), tokenizer=self.tokenizer)
+            self.model = model.RNNModel(self.get("input_seq_len"), self.get("target_seq_len"), tokenizer=self.tokenizer, device=self.device)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
@@ -506,7 +506,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-8"
+    WANDB_PROJECT = "polytax-exps-10"
 
     def __init__(self):
         super(Nanny, self).__init__()

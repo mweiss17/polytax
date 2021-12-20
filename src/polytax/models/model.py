@@ -12,14 +12,15 @@ class RNNOutput(object):
     aux_loss: float = 0.
 
 class DecoderModel(torch.nn.Module):
-    def __init__(self, input_seq_len, target_seq_len, hidden_size, tokenizer):
+    def __init__(self, input_seq_len, target_seq_len, hidden_size, tokenizer, device):
         super().__init__()
+        self.device = device
         self.input_seq_len = input_seq_len
         self.target_seq_len = target_seq_len
         self.hidden_size = hidden_size
         self.tokenizer = tokenizer
-        self.first_decoder = torch.nn.Linear(input_seq_len, target_seq_len)
-        self.second_decoder = torch.nn.Linear(self.hidden_size, self.tokenizer.vocab_size)
+        self.first_decoder = torch.nn.Linear(input_seq_len, target_seq_len, device=device)
+        self.second_decoder = torch.nn.Linear(self.hidden_size, self.tokenizer.vocab_size, device=device)
         self.act = torch.nn.ReLU()
         self.init_weights()
 
@@ -49,9 +50,10 @@ class EncoderModel(torch.nn.Module):
 class RNNModel(torch.nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, input_seq_len, target_seq_len_, tokenizer):
+    def __init__(self, input_seq_len, target_seq_len_, tokenizer, device=None):
         super(RNNModel, self).__init__()
         self.tokenizer = tokenizer
+        self.device = device
         self.input_size = 32
         self.hidden_size = 64
         self.output_size = 32
@@ -60,8 +62,8 @@ class RNNModel(torch.nn.Module):
             embedding_dim=self.input_size)
         self.input_seq_len = input_seq_len
         self.target_seq_len_ = target_seq_len_
-        self.lstm = torch.nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, batch_first=True)
-        self.decoder = DecoderModel(input_seq_len, target_seq_len_, self.hidden_size, tokenizer)
+        self.lstm = torch.nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, batch_first=True).to(device)
+        self.decoder = DecoderModel(input_seq_len, target_seq_len_, self.hidden_size, tokenizer, device=self.device)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.init_weights()
 
@@ -77,8 +79,8 @@ class RNNModel(torch.nn.Module):
         torch.nn.init.xavier_normal_(self.embedding.weight, gain=1.0)
 
     def init_hidden_states(self, batch_size):
-        hidden_state = torch.zeros(1, batch_size, self.hidden_size)
-        cell_state = torch.zeros(1, batch_size, self.hidden_size)
+        hidden_state = torch.zeros(1, batch_size, self.hidden_size, device=self.device)
+        cell_state = torch.zeros(1, batch_size, self.hidden_size, device=self.device)
         torch.nn.init.xavier_normal_(hidden_state, gain=1.0)
         torch.nn.init.xavier_normal_(cell_state, gain=1.0)
         self.hidden = (hidden_state, cell_state)
