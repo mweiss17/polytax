@@ -45,7 +45,7 @@ def get_listops(split='train', shuffle_files=False, seed=None):
   batch_size = 256
   bucket = Bucket("must-results")
 
-  local_dataset_path = f"{os.getcwd()}/data/listops_{split}.tsv"
+  local_dataset_path = f"{os.getcwd()}/data/listops_basic_{split}.tsv"
   os.makedirs(os.path.dirname(local_dataset_path), exist_ok=True)
 
   if not os.path.exists(local_dataset_path):

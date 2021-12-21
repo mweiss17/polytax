@@ -4,3 +4,4 @@ input_seq_len: 512
 target_seq_len: 128
 batch_size: 8
 use_iterable_ds: True
+run_evaluation: False

@@ -506,7 +506,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-13"
+    WANDB_PROJECT = "polytax-exps-18"
 
     def __init__(self):
         super(Nanny, self).__init__()
