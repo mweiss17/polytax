@@ -433,7 +433,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                             xm.master_print("Evaluating...")
                         self.evaluate()
         if xla_found:
-            print("finishing")
+            print("finishing", flush=True)
             self.finish()
         return self.train_state
 
