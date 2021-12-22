@@ -420,13 +420,13 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def run(self, train_state):
         self._build(train_state)
         if self.get("run_training"):
-            print("Training...")
+            print("Training...", flush=True)
             while self.get("num_train_steps") >= self.step:
                 for i, x in enumerate(self.train_loader):
                     if self.step >= self.get("num_train_steps"):
                         break
                     self.train(x)
-                    print(f"step: {self.step}")
+                    print(f"step: {self.step}", flush=True)
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         if xla_found:
                             xm.rendezvous("evaluation")
