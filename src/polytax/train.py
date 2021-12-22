@@ -426,14 +426,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
                     if self.step >= self.get("num_train_steps"):
                         break
                     self.train(x)
+                    print(f"step: {self.step}")
                     if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
                         if xla_found:
                             xm.rendezvous("evaluation")
                             xm.master_print("Evaluating...")
                         self.evaluate()
-
-
         if xla_found:
+            print("finishing")
             self.finish()
         return self.train_state
 
