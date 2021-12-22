@@ -459,8 +459,6 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
         self.next_step()
         self.tracker.add(1)
-        if xla_found:
-            xm.mark_step()
 
     def evaluate(self):
         self.model.eval()
@@ -506,7 +504,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
 class Nanny(WandBMixin, IOMixin, BaseExperiment):
     WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-18"
+    WANDB_PROJECT = "polytax-exps-19"
 
     def __init__(self):
         super(Nanny, self).__init__()
@@ -524,7 +522,7 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
             wandb.finish()
         return wandb_run_id
 
-    async def run(self, resume):
+    async def run(self, resume, verbose=True):
         if self.get("use_tpu"):
             manager = TPUManager(**self.get("tpu/kwargs"))
             tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
@@ -552,21 +550,28 @@ class Nanny(WandBMixin, IOMixin, BaseExperiment):
                 self.jobs.append((future, job))
 
             state = "running"
-            while state == "running":
-                for future, job in self.jobs:
-                    state = future.done() or state
-                    out = job.outbuffer.getvalue()
-                    err = job.errbuffer.getvalue()
-                    if out:
-                        print(f"job-{job.trainer.get('distributed/kwargs/rank')}: {out}")
-                        job.outbuffer.seek(0)
-                        job.outbuffer.truncate()
-                    if err:
-                        print(f"job-{job.trainer.get('distributed/kwargs/rank')}: {err}")
-                        job.errbuffer.seek(0)
-                        job.errbuffer.truncate()
+            with open(f"{self.experiment_directory}/Logs/submission.txt", "w") as f:
+                while state == "running":
+                    for future, job in self.jobs:
+                        state = future.done() or state
+                        out = job.outbuffer.getvalue()
+                        err = job.errbuffer.getvalue()
+                        if out:
+                            out = f"job-{job.trainer.get('distributed/kwargs/rank')}: {out}"
+                            if verbose:
+                                print(out)
+                            f.write(out)
+                            job.outbuffer.seek(0)
+                            job.outbuffer.truncate()
+                        if err:
+                            err = f"job-{job.trainer.get('distributed/kwargs/rank')}: {err}"
+                            if verbose:
+                                print(err)
+                            f.write(err)
+                            job.errbuffer.seek(0)
+                            job.errbuffer.truncate()
 
-                await asyncio.sleep(1)
+                    await asyncio.sleep(1)
             for future, job in self.jobs:
                 print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
                 job.clean_up()
