@@ -347,6 +347,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
             print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()}, flush=True)
+            import torch_xla.debug.metrics as met
+
+            print(met.metrics_report(), flush=True)
         elif not xla_found:
             print(results)
 
