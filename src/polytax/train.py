@@ -339,7 +339,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "train_aux_loss": aux_loss,
             "num_tokens": self.get("input_seq_len")
             * self.total_batch_size
-            * self.step,
+            * self.step * self.get("num_gradient_accumulation_steps"),
             "instantaneous it/s": self.tracker.rate(),
             "global it/s": self.tracker.global_rate(),
         }
@@ -439,9 +439,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        x_hat = self.model(**x)
-        x_hat.loss.backward()
+        for i in range(self.get("num_gradient_accumulation_steps")):
 
+            x_hat = self.model(**x)
+            x_hat.loss.backward()
         self.step_gradients()
         if self.log_scalars_now:
             # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
