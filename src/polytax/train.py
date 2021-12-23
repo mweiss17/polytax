@@ -343,11 +343,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "instantaneous it/s": self.tracker.rate(),
             "global it/s": self.tracker.global_rate(),
         }
-        # Return if we don't have wandb
-        if xla_found:
-            xm.master_print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()})
+
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
+            print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()}, flust=True)
         elif not xla_found:
             print(results)
 
