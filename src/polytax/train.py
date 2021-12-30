@@ -23,7 +23,6 @@ https://huggingface.co/models?filter=t5
 import os
 import io
 import wandb
-from .model import RNNModel
 import seqio
 import numpy as np
 import itertools
@@ -45,7 +44,6 @@ from transformers import (
     MustConfig,
     set_seed,
 )
-from polytax.data.dataset import IterableDataset
 from speedrun import BaseExperiment, WandBMixin, IOMixin, register_default_dispatch
 from transformers.optimization import Adafactor  # pylint: disable=unused-import
 from torch.optim import Adam
@@ -70,6 +68,8 @@ except Exception as e:
     xla_found = False
     from polytax.utils.tracker import RateTracker, print_training_update, print_test_update
 
+from polytax.data.dataset import IterableDataset
+from polytax.model import RNNModel
 from polytax.data.utils import build_dataset, build_seqio_dataset
 from wormulon.train_state import TrainState
 
