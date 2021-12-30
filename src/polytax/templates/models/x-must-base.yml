@@ -8,7 +8,7 @@ model_config:
   eos_token_id: 1
   feed_forward_proj: "relu"
   gradient_checkpointing: "False"
-  initializer_factor: 1.0
+  initializer_factor: 0.1
   is_encoder_decoder: "True"
   layer_norm_epsilon: 1e-6
   model_type: "X-must-base"

@@ -2,14 +2,22 @@ import seqio
 import functools
 import tensorflow_datasets as tfds
 from polytax.data.listops import get_listops
+import t5
 from t5.data import preprocessors
-from t5.data.tasks import DEFAULT_OUTPUT_FEATURES
 from t5.data.mixtures import _glue_tasks_with_weight
 from t5.evaluation import metrics
 from t5.data.glue_utils import get_glue_metric
 from t5.data.glue_utils import get_glue_postprocess_fn
 from t5.data.glue_utils import get_glue_text_preprocessor
 from t5.data.glue_utils import get_super_glue_metric
+
+DEFAULT_OUTPUT_FEATURES = {
+    "inputs": seqio.Feature(
+        vocabulary=t5.data.get_default_vocabulary(), add_eos=True,
+        required=False),
+    "targets": seqio.Feature(
+        vocabulary=t5.data.get_default_vocabulary(), add_eos=True)
+}
 
 # Overwrite T5 tasks for C4 with our own.
 seqio.TaskRegistry.add(

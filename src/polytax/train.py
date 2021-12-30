@@ -22,26 +22,15 @@ https://huggingface.co/models?filter=t5
 # You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 import os
 import io
-import sys
-import signal
 import wandb
-import asyncio
-import traceback
-import models.model as model
+from .model import RNNModel
 import seqio
 import numpy as np
-import tensorflow as tf
 import itertools
-import t5
 import tensorflow_datasets as tfds
-import time
 import argparse
-from copy import deepcopy
-from collections import defaultdict
 import torch
-from wormulon.tpu.tpu_manager import TPUManager
 from wormulon.tpu.bucket import Bucket
-from wormulon.tpu.tpu_job import TPUJob
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 from torch.utils.data import DataLoader
@@ -79,30 +68,21 @@ try:
 except Exception as e:
     print(f"XLA not found {e} \n")
     xla_found = False
-    from utils.tracker import RateTracker, print_training_update, print_test_update
+    from polytax.utils.tracker import RateTracker, print_training_update, print_test_update
 
 from polytax.data.utils import build_dataset, build_seqio_dataset
-from polytax.data import listops
-from polytax.data.dataset import ListOpsDataset
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
     WANDB_PROJECT = "polytax"
     WANDB_ENTITY = "mweiss10"
 
-    def __init__(self, nanny: "Nanny"):
+    def __init__(self,):
         super(Trainer, self).__init__()
-        self._preconfigure(nanny)
+        self._preconfigure()
 
-    def _preconfigure(self, nanny: "Nanny"):
-        # Copy only the essentials from the parent class, i.e. the things that can be
-        # easily serialized.
-        self._experiment_directory = nanny._experiment_directory
-        self._config = deepcopy(nanny._config)
-        self._argv = deepcopy(nanny._argv)
-        self.WANDB_ENTITY = nanny.WANDB_ENTITY or ""
-        self.WANDB_PROJECT = nanny.WANDB_PROJECT or ""
-        self.WANDB_RUN_ID = nanny.wandb_run_id or ""
+    def _preconfigure(self):
+        self.auto_setup()
         # Bit of a hack, but we set this here to have it uploaded to wandb.
         self.set("speedrun_meta/experiment_directory", self._experiment_directory)
 
@@ -216,7 +196,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             model_config = MustConfig.from_dict(model_config)
             self.model = MustForConditionalGeneration(model_config)
         elif "lstm" in self.get("model_config/model_type"):
-            self.model = model.RNNModel(self.get("input_seq_len"), self.get("target_seq_len"), tokenizer=self.tokenizer, device=self.device)
+            self.model = RNNModel(self.get("input_seq_len"), self.get("target_seq_len"), tokenizer=self.tokenizer, device=self.device)
         else:
             model_config = T5Config.from_dict(self.get("model_config"))
             self.model = T5ForConditionalGeneration(model_config)
@@ -504,111 +484,12 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     __call__ = run
 
 
-class Nanny(WandBMixin, IOMixin, BaseExperiment):
-    WANDB_ENTITY = "mweiss10"
-    WANDB_PROJECT = "polytax-exps-19"
-
-    def __init__(self):
-        super(Nanny, self).__init__()
-        self.auto_setup()
-        self.jobs = []
-        original_sigint = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, self.exit_gracefully)
-
-    def setup_wandb(self):
-        wandb_run_id = ""
-        if self.get("use_wandb"):
-            self.initialize_wandb(resume=False)
-            self.wandb_run_url = wandb.run.url
-            wandb_run_id = self.wandb_run.id
-            wandb.finish()
-        return wandb_run_id
-
-    async def run(self, resume, verbose=True):
-        if self.get("use_tpu"):
-            manager = TPUManager(**self.get("tpu/kwargs"))
-            tpus = manager.get_tpus(self.get("distributed/kwargs/world_size"))
-            jobs = []
-            for i, tpu in enumerate(tpus):
-                print(f"Dibs on TPU: {tpu}, creating job-{i}")
-                trainer = Trainer(self)
-                env_stmts = trainer.get("job/kwargs/env_stmts")
-                env_stmts.append(f"export WANDB_API_KEY={os.environ.get('WANDB_API_KEY', '')};")
-                trainer.set('job/kwargs/env_stmts', env_stmts)
-                if len(tpus) > 1:
-                    trainer.set("distributed/kwargs/init_method", f"tcp://{tpus[0].ip_address}:2345")
-                trainer.set('distributed/kwargs/rank', i)
-                jobs.append(TPUJob(trainer, tpu))
-
-        train_state = TrainState.initial_state(step=self.step, epoch=self.epoch,
-                                               misc_attributes={"wandb_run_id": self.setup_wandb()})
-        if self.get("use_tpu"):
-            for job, tpu in zip(jobs, tpus):
-                job.arm(train_state, resume=resume)
-                try:
-                    future = job.submit()
-                except Exception as e:
-                    print("consuming exception")
-                self.jobs.append((future, job))
-
-            state = "running"
-            with open(f"{self.experiment_directory}/Logs/submission.txt", "w") as f:
-                while state == "running":
-                    for future, job in self.jobs:
-                        state = future.done() or state
-                        out = job.outbuffer.getvalue()
-                        err = job.errbuffer.getvalue()
-                        if out:
-                            out = f"job-{job.trainer.get('distributed/kwargs/rank')}: {out}"
-                            if verbose:
-                                print(out)
-                            f.write(out)
-                            job.outbuffer.seek(0)
-                            job.outbuffer.truncate()
-                        if err:
-                            err = f"job-{job.trainer.get('distributed/kwargs/rank')}: {err}"
-                            if verbose:
-                                print(err)
-                            f.write(err)
-                            job.errbuffer.seek(0)
-                            job.errbuffer.truncate()
-
-                    await asyncio.sleep(1)
-            for future, job in self.jobs:
-                print(f"Job {state}, restarting from latest train state, cleaning up jobs then restarting")
-                job.clean_up()
-                # check if done
-                self.run(resume=True)
-
-        else:
-            trainer = Trainer(self)
-            trainer(train_state)
-
-        # Update self
-        self._step = train_state.step
-        self._epoch = train_state.epoch
-
-    def exit_gracefully(self, signum, frame):
-        print("Exiting gracefully")
-        for future, job in self.jobs:
-            job.clean_up()
-            print(f"{job.tpu} is now available")
-            print(f"exited {self.wandb_run_url}")
-        sys.exit(0)
-
-
-
-
 if __name__ == "__main__":
     if xla_found:
         print("XLA found")
-
         parser = argparse.ArgumentParser()
         parser.add_argument("bucket", type=str)
         parser.add_argument("path", type=str)
         args = parser.parse_args()
         from wormulon.tpu.tpu_runner import JobRunner
-
         JobRunner(args.bucket, args.path).run()
-    else:
-        asyncio.run(Nanny().run(resume=True))

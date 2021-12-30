@@ -1,7 +1,7 @@
 run_training: True
 run_evaluation: True
 seed: 12345
-eval_every: 100
+eval_every: 1000
 
 # Multi-host
 distributed:
@@ -13,7 +13,7 @@ distributed:
 dataset_name: "c4.en" # "glue_cola_v002"
 split: "train"
 input_seq_len: 512
-target_seq_len: 128
+target_seq_len: 64
 batch_size: 16 # per device
 use_iterable_ds: True
 
@@ -33,7 +33,8 @@ training:
 wandb:
   log_scalars_every: 20
 
-num_train_steps: 10000
+num_train_steps: 100000
+num_gradient_accumulation_steps: 1
 
 # Logging
 use_wandb: True
@@ -72,7 +73,7 @@ optim:
     weight_decay: 0.0
     relative_step: True
     scale_parameter: True
-    warmup_init: True
+    warmup_init: True # True
 
 tpu:
   kwargs:
@@ -89,5 +90,5 @@ job:
     env_stmts: ["export XRT_TPU_CONFIG='localservice;0;localhost:51011';", "export PATH=$PATH:/home/$USER/.local/bin;", "unset LD_PRELOAD;"]
     setup_cmds: ["cd ~/polytax/ && git pull origin master", "pip uninstall -y wormulon", "pip install git+https://git@github.com/mweiss17/wormulon@main#egg=wormulon", "pip uninstall -y transformers", "pip install git+https://github.com/Arka161/transformers@master#egg=transformers", "cd ~/polytax/ && pip install -e .[xla]"]
     install_cmd: "cd ~/; git clone https://github.com/mweiss17/polytax.git; pip uninstall -y wormulon; pip install -e polytax[xla];"
-    train_cmd: "python3 ~/polytax/src/polytax/train.py"
+    train_cmd: "python3 ~/polytax/src/polytax/train.py" # XLA_USE_BF16=True
     cleanup_cmd: "pkill -9 python3"
