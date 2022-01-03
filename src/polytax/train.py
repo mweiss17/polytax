@@ -74,7 +74,7 @@ from polytax.data.utils import build_dataset, build_seqio_dataset
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
-    WANDB_PROJECT = "polytax"
+    WANDB_PROJECT = "polytax-exps-20"
     WANDB_ENTITY = "mweiss10"
 
     def __init__(self,):
@@ -327,9 +327,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
             print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()}, flush=True)
-            import torch_xla.debug.metrics as met
+            # import torch_xla.debug.metrics as met
 
-            print(met.metrics_report(), flush=True)
+            # print(met.metrics_report(), flush=True)
         elif not xla_found:
             print(results)
 
@@ -493,3 +493,8 @@ if __name__ == "__main__":
         args = parser.parse_args()
         from wormulon.tpu.tpu_runner import JobRunner
         JobRunner(args.bucket, args.path).run()
+    else:
+        print("XLA not found")
+        train_state = TrainState.initial_state(step=0, epoch=0)
+        Trainer().run(train_state=train_state)
+
