@@ -74,7 +74,7 @@ from polytax.data.utils import build_dataset, build_seqio_dataset
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
-    WANDB_PROJECT = "polytax-exps-20"
+    WANDB_PROJECT = "polytax-exps-22"
     WANDB_ENTITY = "mweiss10"
 
     def __init__(self,):
