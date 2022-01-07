@@ -74,7 +74,7 @@ from polytax.data.utils import build_dataset, build_seqio_dataset
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
-    WANDB_PROJECT = "polytax-exps-22"
+    WANDB_PROJECT = "polytax-exps-24"
     WANDB_ENTITY = "mweiss10"
 
     def __init__(self,):
@@ -187,6 +187,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         model_config["GLOBAL_RANK"] = self.GLOBAL_RANK
         model_config["NUM_SHARDS"] = self.NUM_SHARDS
         model_config["xla_found"] = xla_found
+        model_config["dtype"] = "torch.bfloat16" if xla_found else "torch.float32"
         model_config["seed"] = self.get("seed")
         model_config["input_seq_len"] = self.get("input_seq_len")
         if "switch" in self.get("model_config/model_type"):
