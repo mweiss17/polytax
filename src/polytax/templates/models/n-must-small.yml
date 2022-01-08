@@ -1,6 +1,6 @@
 # Model Config
 model_config:
-  d_ff: 2048 # 2048 / 6
+  d_ff: 2048
   d_kv: 64
   d_model: 512
   decoder_start_token_id: 0
@@ -21,6 +21,6 @@ model_config:
   use_cache: false
   cache_dir: "/tmp/"
   vocab_size: 32003
-  capacity_factor: 1.0
+  capacity_factor: 2.0
   n_experts: 6
   num_timesteps: 6

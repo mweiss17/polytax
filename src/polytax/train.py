@@ -70,7 +70,7 @@ except Exception as e:
 
 from polytax.data.dataset import IterableDataset
 from polytax.model import RNNModel
-from polytax.data.utils import build_dataset, build_seqio_dataset
+from polytax.data.utils import build_dataset, build_seqio_dataset, maptensorto, slicetensorto
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
@@ -151,8 +151,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def _build_loader(self, dataset, cycle=False):
         loader = DataLoader(dataset, batch_size=None, pin_memory=True, num_workers=0)
-        if xla_found:
-            loader = pl.MpDeviceLoader(loader, self.device)
+        # if xla_found:
+        #     loader = pl.MpDeviceLoader(loader, self.device)
         if cycle:
             loader = itertools.cycle(loader)
         else:
@@ -162,7 +162,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build_train_tasks(self):
         mixture = seqio.get_mixture_or_task(self.get("dataset_name"))
         dataset = build_seqio_dataset(mixture, self.seq_len, "train", seed=self.get("seed"), pack=True)
-        _, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"), device=self.device)
+        _, dataset = build_dataset(dataset, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, self.get("use_iterable_ds"))
         self.train_loader = self._build_loader(dataset, cycle=True)
 
     def _build_eval_tasks(self):
@@ -172,7 +172,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.eval_datasets = {}
         for task in eval_tasks:
             ds = build_seqio_dataset(task, self.seq_len, self.get("val_split_name"), seed=self.get("seed"), pack=False)
-            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True, device=self.device, drop_remainder=True)
+            tf_ds, ds = build_dataset(ds, self.get("batch_size"), self.GLOBAL_RANK, self.NUM_SHARDS, use_iterable_ds=True, drop_remainder=True)
             self.eval_datasets[task] = (tf_ds, self._build_loader(ds, cycle=False))
 
     def _build_model(self, train_state: "TrainState"):
@@ -219,21 +219,11 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         return self.step % self.get("training/checkpoint_every") == 0 and self.step > 0
 
     @property
-    def losses_state_dict(self):
-        return {}
-        # TODO re-add
-        # return {"loss": self.loss.state_dict()}
-
-    @property
     def optims_state_dict(self):
         state_dict = {}
         if self.optim is not None:
             state_dict.update({"optim": self.optim.state_dict()})
         return state_dict
-
-    @property
-    def schedulers_state_dict(self):
-        return {}
 
     def serialize(self):
         buffer = io.BytesIO()
@@ -246,9 +236,9 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             step=self.step,
             epoch=self.epoch,
             model_state_dict=self.model.state_dict(),
-            losses_state_dict=self.losses_state_dict,
             optims_state_dict=self.optims_state_dict,
-            schedulers_state_dict=self.schedulers_state_dict,
+            losses_state_dict={},
+            schedulers_state_dict={},
             misc_attributes={"wandb_run_id": self.wandb_run_id},
         )
 
@@ -320,17 +310,14 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             "train_aux_loss": aux_loss,
             "num_tokens": self.get("input_seq_len")
             * self.total_batch_size
-            * self.step * self.get("num_gradient_accumulation_steps"),
+            * self.step * self.get("num_gradient_accumulation_steps", 1),
             "instantaneous it/s": self.tracker.rate(),
             "global it/s": self.tracker.global_rate(),
         }
 
         if self.get("use_wandb") and self.IS_GLOBAL_MASTER:
             self.wandb_log(**results)
-            print({"device": self.device, "step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()}, flush=True)
-            # import torch_xla.debug.metrics as met
-
-            # print(met.metrics_report(), flush=True)
+            print({"step": self.step, "loss": loss, "rate": self.tracker.rate(), "global": self.tracker.global_rate()}, flush=True)
         elif not xla_found:
             print(results)
 
@@ -399,41 +386,19 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             self.optim.step()
         self.optim.zero_grad()
 
-    @register_default_dispatch
-    def run(self, train_state):
-        self._build(train_state)
-        if self.get("run_training"):
-            print("Training...", flush=True)
-            while self.step < self.get("num_train_steps"):
-                for i, x in enumerate(self.train_loader):
-                    if self.step >= self.get("num_train_steps"):
-                        break
-                    self.train(x)
-                    if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
-                        if xla_found:
-                            xm.rendezvous("evaluation")
-                            xm.master_print("Evaluating...")
-                        self.evaluate()
-        if xla_found:
-            print("finishing", flush=True)
-            self.finish()
-        return self.train_state
-
     def train(self, x):
         self.model.train()
         self.model.to(self.device)
-        for i in range(self.get("num_gradient_accumulation_steps")):
-
-            x_hat = self.model(**x)
+        num_slices = self.get("num_gradient_accumulation_steps", 1)
+        for i in range(num_slices):
+            xb = slicetensorto(x, i, num_slices, self.device)
+            x_hat = self.model(**xb)
+            x_hat.loss = x_hat.loss / num_slices
             x_hat.loss.backward()
         self.step_gradients()
         if self.log_scalars_now:
-            # If XLA is found, then we are on TPU and we should use a closure to increase efficiency
             if xla_found:
-                xm.add_step_closure(
-                    self._log_train, args=(x, x_hat), run_async=True
-                )
-            # Otherwise just call the function to log directly
+                xm.add_step_closure(self._log_train, args=(x, x_hat), run_async=True)
             else:
                 self._log_train(x, x_hat)
 
@@ -475,6 +440,26 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
             # Otherwise just call the function to log directly
             else:
                 self._log_eval(all_preds, all_examples)
+
+    @register_default_dispatch
+    def run(self, train_state):
+        self._build(train_state)
+        if self.get("run_training"):
+            print("Training...", flush=True)
+            while self.step < self.get("num_train_steps"):
+                for i, x in enumerate(self.train_loader):
+                    if self.step >= self.get("num_train_steps"):
+                        break
+                    self.train(x)
+                    if self.get("run_evaluation") and self.step % self.get("eval_every") == 0:
+                        if xla_found:
+                            xm.rendezvous("evaluation")
+                            xm.master_print("Evaluating...")
+                        self.evaluate()
+        if xla_found:
+            print("finishing", flush=True)
+            self.finish()
+        return self.train_state
 
 
     def finish(self):

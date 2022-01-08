@@ -2,36 +2,26 @@ import torch
 import numpy as np
 
 class IterableDataset(torch.utils.data.IterableDataset):
-    # TODO: put on xla
-    def __init__(self, np_iterator, device):
+    def __init__(self, np_iterator):
         self.np_iterator = np_iterator
-        self.device = torch.device("cpu")
 
     def __iter__(self):
         def process_sample(sample):
             if sample.get("encoder_segment_ids") is None:
-                attention_mask = torch.tensor(sample["encoder_input_tokens"], dtype=torch.long, device=self.device)
+                attention_mask = torch.tensor(sample["encoder_input_tokens"], dtype=torch.long)
                 attention_mask = torch.where(attention_mask >= 1, 1, attention_mask)
             else:
-                attention_mask = torch.tensor(sample["encoder_segment_ids"], dtype=torch.long, device=self.device
-                )
-            labels = torch.tensor(sample["decoder_target_tokens"], dtype=torch.long, device=self.device)
+                attention_mask = torch.tensor(sample["encoder_segment_ids"], dtype=torch.long)
+            labels = torch.tensor(sample["decoder_target_tokens"], dtype=torch.long)
             sample = {
-                "input_ids": torch.tensor(
-                    sample["encoder_input_tokens"], dtype=torch.long, device=self.device
-                ),
+                "input_ids": torch.tensor(sample["encoder_input_tokens"], dtype=torch.long),
                 "attention_mask": attention_mask,
-                "decoder_input_ids": torch.tensor(
-                    sample["decoder_input_tokens"], dtype=torch.long, device=self.device
-                ),
-                "decoder_attention_mask": torch.tensor(
-                    sample["decoder_loss_weights"], dtype=torch.long, device=self.device
-                ),
+                "decoder_input_ids": torch.tensor(sample["decoder_input_tokens"], dtype=torch.long),
+                "decoder_attention_mask": torch.tensor(sample["decoder_loss_weights"], dtype=torch.long),
                 "labels": torch.where(labels >= 32000, -100, labels),
             }
             return sample
-
-        return map(process_sample, self.np_iterator,)
+        return map(process_sample, self.np_iterator)
 
 class ListOpsDataset(torch.utils.data.IterableDataset):
     # TODO: Clean this up https://pytorch.org/docs/stable/_modules/torch/utils/data/dataset.html#IterableDataset
