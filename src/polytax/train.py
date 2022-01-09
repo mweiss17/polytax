@@ -255,7 +255,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
 
     def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False):
         sample_id = 0
-        all_labels = x['labels']
+        all_labels = x['labels'].cpu()
         all_preds = x_hat.logits.argmax(axis=2)
         all_inputs = x["input_ids"]
 
