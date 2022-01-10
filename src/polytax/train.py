@@ -74,7 +74,7 @@ from polytax.data.utils import build_dataset, build_seqio_dataset, maptensorto, 
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
-    WANDB_PROJECT = "polytax-exps-24"
+    WANDB_PROJECT = "polytax-exps-26"
     WANDB_ENTITY = "mweiss10"
 
     def __init__(self,):
@@ -256,7 +256,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def decode_and_compute_accuracy(self, x, x_hat, compute_examples=False):
         sample_id = 0
         all_labels = x['labels'].cpu()
-        all_preds = x_hat.logits.argmax(axis=2)
+        all_preds = x_hat.logits.argmax(axis=2).cpu()
         all_inputs = x["input_ids"]
 
         input_list = all_inputs[sample_id].cpu().numpy().tolist()
