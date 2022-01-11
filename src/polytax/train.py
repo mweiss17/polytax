@@ -386,22 +386,22 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         self.model.train()
         self.model.to(self.device)
         num_slices = self.get("num_gradient_accumulation_steps", 1)
-        acc_loss = torch.tensor(0.0, device=self.device)
-        acc_aux_loss = torch.tensor(0.0, device=self.device)
+        loss = torch.tensor(0.0, device=self.device)
+        aux_loss = torch.tensor(0.0, device=self.device)
         for i in range(num_slices):
             xb = slicetensorto(x, i, num_slices, self.device)
             x_hat = self.model(**xb)
             x_hat.loss = x_hat.loss / num_slices
-            x_hat.aux_loss = x_hat.aux_loss / num_slices
-            acc_loss += x_hat.loss
-            acc_aux_loss += x_hat.aux_loss
+            loss += x_hat.loss
+            if x_hat.aux_loss is not None:
+                aux_loss += x_hat.aux_loss / num_slices
             x_hat.loss.backward()
         self.step_gradients()
         if self.log_scalars_now:
             if xla_found:
-                xm.add_step_closure(self._log_train, args=(x, x_hat, acc_loss, acc_aux_loss), run_async=True)
+                xm.add_step_closure(self._log_train, args=(x, x_hat, loss, aux_loss), run_async=True)
             else:
-                self._log_train(x, x_hat, acc_loss, acc_aux_loss)
+                self._log_train(x, x_hat, loss, aux_loss)
 
         if self.checkpoint_now:
             self.checkpoint()
