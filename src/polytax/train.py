@@ -33,7 +33,6 @@ from wormulon.tpu.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 from torch.utils.data import DataLoader
-from torch_db import Tracer
 
 np_config.enable_numpy_behavior()
 from transformers import (
@@ -394,10 +393,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         aux_loss = torch.tensor(0.0, device=self.device)
         for i in range(num_slices):
             xb = slicetensorto(x, i, num_slices, self.device)
-            with Tracer().trace(self.model, clear_records=True) as tracer:
-                x_hat = self.model(**xb)
-                if self.get("save_trace"):
-                    torch.save(tracer.records, open("notebooks/tracer_records.pt", "wb"))
+            x_hat = self.model(**xb)
             x_hat.loss = x_hat.loss / num_slices
             loss += x_hat.loss
             if x_hat.aux_loss is not None:
