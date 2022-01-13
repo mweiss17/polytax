@@ -294,7 +294,7 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         loss = loss.item()
         aux_loss = aux_loss.item()
         if xla_found:
-            self.bucket.touch(self.trainer.experiment_directory + "/heartbeat")
+            self.bucket.touch(self.experiment_directory + "/heartbeat")
 
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, compute_examples=False)
