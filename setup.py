@@ -45,7 +45,7 @@ setuptools.setup(
         "speedrun @ git+https://git@github.com/inferno-pytorch/speedrun@dev#egg=speedrun",
         "transformers @ git+https://github.com/Arka161/transformers@master#egg=transformers",
         "wormulon @ git+https://git@github.com/mweiss17/wormulon@main#egg=wormulon",
-        "torch-deborker @ git+https://github.com/nasimrahaman/torch-deborker@recurrent#egg=torch-deborker",
+        # "torch-deborker @ git+https://github.com/nasimrahaman/torch-deborker@recurrent#egg=torch-deborker",
     ],
     extras_require={
         "xla": [
