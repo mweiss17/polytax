@@ -55,6 +55,23 @@ seqio.TaskRegistry.add(
     metric_fns=[],
 )
 
+
+seqio.TaskRegistry.add(
+    "c4_europe.en",
+    seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir="gs://c4-datasets-europe/"),
+    preprocessors=[
+        functools.partial(
+            preprocessors.rekey, key_map={"inputs": None, "targets": "text"}
+        ),
+        seqio.preprocessors.tokenize,
+        seqio.CacheDatasetPlaceholder(),
+        preprocessors.span_corruption,
+        seqio.preprocessors.append_eos_after_trim,
+    ],
+    output_features=DEFAULT_OUTPUT_FEATURES,
+    metric_fns=[],
+)
+
 seqio.TaskRegistry.add(
     "tiny_shakespeare",
     seqio.TfdsDataSource(tfds_name="tiny_shakespeare:1.0.0"),

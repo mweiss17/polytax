@@ -33,6 +33,7 @@ from wormulon.tpu.bucket import Bucket
 import torch.distributed as dist
 from tensorflow.python.ops.numpy_ops import np_config
 from torch.utils.data import DataLoader
+from torch_db import Tracer
 
 np_config.enable_numpy_behavior()
 from transformers import (
@@ -74,7 +75,7 @@ from polytax.data.utils import build_dataset, build_seqio_dataset, maptensorto, 
 from wormulon.train_state import TrainState
 
 class Trainer(WandBMixin, IOMixin, BaseExperiment):
-    WANDB_PROJECT = "polytax-exps-26"
+    WANDB_PROJECT = "polytax-exps-27"
     WANDB_ENTITY = "mweiss10"
 
     def __init__(self,):
@@ -100,20 +101,21 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _build(self, train_state: "TrainState"):
         print(f"{self._config}")
         self._build_dist()
+        self._build_bucket()
         self._build_general(train_state)
         self._build_tasks()
         self._build_model(train_state)
         self._build_optimizer(train_state)
 
+    def _build_bucket(self):
+        self.experiment_directory = self._experiment_directory
+        self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
+
     def _build_general(self, train_state: "TrainState"):
         self._step = train_state.step
         self._epoch = train_state.epoch
         self.tracker = RateTracker()
-
-        # Builds the local directory structure.
-        self.experiment_directory = self._experiment_directory
         os.environ["WANDB_RUN_ID"] = train_state.misc_attributes.get("wandb_run_id", "")
-        self.bucket = Bucket(self.get("tpu/kwargs/bucket"))
 
         set_seed(self.get("seed"))  # handles random seed setting for everything but XLA
         if self.IS_GLOBAL_MASTER:
@@ -292,6 +294,8 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
     def _log_train(self, x, x_hat, loss, aux_loss):
         loss = loss.item()
         aux_loss = aux_loss.item()
+        if xla_found:
+            self.bucket.touch(self.trainer.experiment_directory + "/heartbeat")
 
         # Get a text example and log it
         input, label, pred, accuracy = self.decode_and_compute_accuracy(x, x_hat, compute_examples=False)
@@ -390,7 +394,10 @@ class Trainer(WandBMixin, IOMixin, BaseExperiment):
         aux_loss = torch.tensor(0.0, device=self.device)
         for i in range(num_slices):
             xb = slicetensorto(x, i, num_slices, self.device)
-            x_hat = self.model(**xb)
+            with Tracer().trace(self.model, clear_records=True) as tracer:
+                x_hat = self.model(**xb)
+                if self.get("save_trace"):
+                    torch.save(tracer.records, open("notebooks/tracer_records.pt", "wb"))
             x_hat.loss = x_hat.loss / num_slices
             loss += x_hat.loss
             if x_hat.aux_loss is not None:
